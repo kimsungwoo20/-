@@ -18,7 +18,7 @@ func wait(sec):
 
 func clear_units(game):
 	for u in game.units.duplicate():
-		if not u.is_worker:
+		if not u.is_worker and not u.is_neutral:
 			u.dead = true
 			game.remove_unit(u)
 
@@ -203,6 +203,153 @@ func research_checks(game, main):
 	main.take_damage(99999.0, null)
 	await wait(0.1)
 	check(sat.is_main and sat.tier == 3 and p.succession <= 0.0, "다여왕 군체: 즉시 계승, 등급 유지")
+
+	await map_checks(game)
+
+func camp_of(game, kind):
+	for ci in game.camps.size():
+		for u in game.camps[ci]["units"]:
+			if is_instance_valid(u) and not u.dead and u.kind == kind:
+				return ci
+	return -1
+
+func map_checks(game):
+	var p = game.players[0]
+	clear_units(game)
+	await wait(0.2)
+
+	# 중립 생물은 먼저 공격하지 않고, 아군도 자동으로 공격하지 않는다
+	var ci = camp_of(game, "grub")
+	var c = game.camps[ci]
+	var g1 = c["units"][0]
+	var g2 = c["units"][1]
+	var st = game.spawn_unit(0, "stinger", g1.position + Vector2(40, 0))
+	await wait(3.0)
+	check(st.hp == st.max_hp and g1.hp == g1.max_hp, "중립 생물과 아군은 서로 먼저 공격하지 않는다")
+	# 공격하면 같은 무리가 함께 반격한다
+	st.max_hp = 9999.0
+	st.hp = 9999.0
+	st.cmd_attack(g1)
+	await wait(2.0)
+	check(g2.target == st, "무리 하나를 공격하면 같은 무리가 반격한다")
+	check(st.hp < st.max_hp, "중립 생물이 반격한다")
+	# 처치하면 사체가 남는다
+	var n_corpse = 0
+	for n in game.res_nodes:
+		if n.kind == "corpse":
+			n_corpse += 1
+	g1.take_damage(99999.0, st)
+	g2.take_damage(99999.0, st)
+	await wait(0.1)
+	var corpses = game.res_nodes.filter(func(n): return n.kind == "corpse")
+	check(corpses.size() == n_corpse + 2, "유충 2마리 처치 → 사체 2개")
+	check(corpses.size() > 0 and abs(corpses[-1].amount - 300.0) < 0.1, "유충 사체 식량 300")
+	st.dead = true
+	game.remove_unit(st)
+	# 사체 채집
+	var cp = corpses[-1]
+	var wk = game.spawn_unit(0, "worker", cp.position + Vector2(30, 0))
+	wk.cmd_gather(cp)
+	Engine.time_scale = 4.0
+	await wait(2.0)
+	Engine.time_scale = 1.0
+	check(cp.amount < 300.0, "사체에서 식량을 캔다")
+	wk.dead = true
+	game.remove_unit(wk)
+	# 무리 재생성
+	Engine.time_scale = 16.0
+	await wait(Data.NEUTRAL_RESPAWN / 16.0 + 1.0)
+	Engine.time_scale = 1.0
+	var alive = 0
+	for u in game.camps[ci]["units"]:
+		if is_instance_valid(u) and not u.dead:
+			alive += 1
+	check(alive == 2, "전멸한 무리는 %d초 뒤 다시 나타난다" % int(Data.NEUTRAL_RESPAWN))
+	check(not is_instance_valid(cp) or cp.gone, "사체는 %d초 뒤 썩어 사라진다" % int(Data.CORPSE_DECAY))
+
+	# 끌려 나온 중립 생물은 둥지로 돌아간다
+	var sp = game.camps[camp_of(game, "spider")]["units"][0]
+	var bait = game.spawn_unit(0, "stinger", sp.position + Vector2(20, 0))
+	bait.max_hp = 99999.0
+	bait.hp = 99999.0
+	sp.take_damage(1.0, bait)
+	bait.cmd_move(sp.home + Vector2(700, 0))
+	Engine.time_scale = 4.0
+	await wait(4.0)
+	Engine.time_scale = 1.0
+	check(sp.target == null and sp.position.distance_to(sp.home) < Data.LEASH + 40.0, "멀리 끌려 나온 중립 생물은 추격을 멈추고 돌아간다")
+	bait.dead = true
+	game.remove_unit(bait)
+
+	# 진딧물 도살
+	var aph = null
+	for n in game.res_nodes:
+		if n.kind == "aphid" and n.position.x > 2000:
+			aph = n
+			break
+	# 일꾼이 놀고 있는 플레이어 1 로 재야 채집 수입이 섞이지 않는다
+	var p1 = game.players[1]
+	var f0 = p1.food
+	var killer = game.spawn_unit(1, "soldier", aph.position + Vector2(40, 0))
+	killer.cmd_attack(aph)
+	Engine.time_scale = 8.0
+	await wait(Data.APHID_HP / 4.0 / 8.0 + 2.0)
+	Engine.time_scale = 1.0
+	check(aph.dead and not aph.available(), "진딧물 군락을 공격해 도살할 수 있다")
+	check(abs(p1.food - f0 - Data.APHID_SLAY_FOOD) < 0.1, "도살한 쪽이 식량 +%d" % int(Data.APHID_SLAY_FOOD))
+	Engine.time_scale = 16.0
+	await wait(Data.APHID_RESPAWN / 16.0 + 1.0)
+	Engine.time_scale = 1.0
+	check(not aph.dead and aph.available(), "도살된 군락은 %d초 뒤 다시 채집 가능" % int(Data.APHID_RESPAWN))
+	killer.dead = true
+	game.remove_unit(killer)
+
+	# 은신과 감지
+	clear_units(game)
+	var far = Vector2(1600, 1600)
+	var hidden = game.spawn_unit(1, "soldier", far)
+	hidden.stealthed = true
+	var hunter = game.spawn_unit(0, "stinger", far + Vector2(60, 0))
+	hunter.cmd_amove(far + Vector2(-200, 0))
+	await wait(1.5)
+	check(hidden.hp == hidden.max_hp, "감지하지 못한 은신 유닛은 공격하지 않는다")
+	await wait(0.2)
+	game._update_fog()
+	check(not hidden.visible, "감지하지 못한 은신 유닛은 화면에 보이지 않는다")
+	var eye = game.spawn_unit(0, "scout", far + Vector2(0, -100))
+	hunter.cmd_attack(hidden)
+	await wait(2.0)
+	check(hidden.hp < hidden.max_hp or hidden.dead, "날개 정찰병이 감지하면 은신 유닛을 공격할 수 있다")
+	game._update_fog()
+	check(hidden.dead or hidden.visible, "감지된 은신 유닛은 보인다")
+
+	# 전장의 안개
+	clear_units(game)
+	await wait(0.2)
+	var enemy = game.spawn_unit(1, "soldier", Vector2(2400, 1850))
+	game._update_fog()
+	check(not enemy.visible, "시야 밖의 적 유닛은 보이지 않는다")
+	var looker = game.spawn_unit(0, "stinger", Vector2(2300, 1850))
+	await wait(0.1)
+	game._update_fog()
+	check(enemy.visible, "시야 안의 적 유닛은 보인다")
+	var eb = game.spawn_building(1, "lab", Vector2(2400, 1760), true, false)
+	await wait(0.1)
+	game._update_fog()
+	check(eb.visible, "시야 안의 적 건물은 보인다")
+	looker.dead = true
+	game.remove_unit(looker)
+	await wait(0.1)
+	game._update_fog()
+	check(not enemy.visible and eb.visible, "시야를 잃으면 적 유닛은 사라지고, 본 적 있는 건물은 남는다")
+	check(game.fog.is_explored_at(Vector2(2400, 1850)) and not game.fog.is_visible_at(Vector2(2400, 1850)), "한 번 본 곳은 '본 적 있음' 상태가 된다")
+
+	# 맵 중앙 사체 낙하
+	var before = game.res_nodes.filter(func(n): return n.kind == "corpse").size()
+	game.drop_t = Data.CENTER_DROP_EVERY - 0.5
+	await wait(1.0)
+	var after = game.res_nodes.filter(func(n): return n.kind == "corpse")
+	check(after.size() == before + 1 and abs(after[-1].amount - Data.CENTER_DROP_AMOUNT) < 0.1, "%d초마다 맵 중앙에 큰 사체가 떨어진다" % int(Data.CENTER_DROP_EVERY))
 
 func _initialize():
 	Engine.time_scale = 1.0

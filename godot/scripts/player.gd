@@ -6,6 +6,7 @@ var label = ""
 var color = Color.WHITE
 var is_ai = false
 var alive = true
+var neutral = false     # 중립 생물 전용 가상 플레이어
 var food = Data.START_FOOD
 var mat = Data.START_MAT
 var pop_used = 0.0

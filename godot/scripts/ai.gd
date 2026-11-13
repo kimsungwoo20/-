@@ -249,7 +249,27 @@ func _command_army(army, main):
 				if u.state == UnitScript.IDLE:
 					u.cmd_amove(tgt.position)
 	else:
+		# 쉬는 병력이 충분하면 가까운 유충·거미 무리를 사냥해 사체(식량)를 얻는다
+		if army.size() >= 6:
+			var prey = _nearest_prey(main.position)
+			if prey != null:
+				for u in army:
+					if u.state == UnitScript.IDLE or u.state == UnitScript.MOVE:
+						u.cmd_attack(prey)
+				return
 		var home = main.position + (Data.MAP_SIZE / 2.0 - main.position).normalized() * 140.0
 		for u in army:
 			if u.state == UnitScript.IDLE and u.position.distance_to(home) > 260.0:
 				u.cmd_move(home + Vector2(randf_range(-60, 60), randf_range(-60, 60)))
+
+func _nearest_prey(pos):
+	var best = null
+	var bd = 1000.0
+	for c in game.camps:
+		for u in c["units"]:
+			if is_instance_valid(u) and not u.dead and u.kind != "mantis":
+				var dd = u.position.distance_to(pos)
+				if dd < bd:
+					bd = dd
+					best = u
+	return best

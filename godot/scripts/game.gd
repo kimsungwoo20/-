@@ -8,6 +8,7 @@ const NodeScript = preload("res://scripts/resource_node.gd")
 const PlayerScript = preload("res://scripts/player.gd")
 const AIScript = preload("res://scripts/ai.gd")
 const HudScript = preload("res://scripts/hud.gd")
+const FogScript = preload("res://scripts/fog.gd")
 
 const CELL = 64.0
 const HOTKEYS = [KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B]
@@ -35,6 +36,12 @@ var hud
 var overlay
 var world
 var decor = []
+var fog
+var fog_t = 0.0
+var camps = []           # {pos, kinds, units, respawn}
+var drop_t = 0.0
+var detectors = {}       # pid -> [[위치, 감지 반경], ...]
+var drop_rng = RandomNumberGenerator.new()
 
 var build_mode = ""
 var lab_tab = "body"
@@ -52,6 +59,10 @@ func _ready():
 	overlay.z_index = 50
 	add_child(overlay)
 	overlay.draw.connect(_draw_overlay)
+	fog = FogScript.new()
+	fog.z_index = 30
+	add_child(fog)
+	fog.setup()
 	camera = Camera2D.new()
 	add_child(camera)
 	camera.make_current()
@@ -64,6 +75,7 @@ func _ready():
 	var m = main_nest(human_id)
 	if m != null:
 		camera.position = m.position
+	_update_fog()
 	# 웹 주소 끝에 ?debug 를 붙이면 자원 5000 으로 시작(점검용)
 	if OS.has_feature("web"):
 		var q = str(JavaScriptBridge.eval("window.location.search", true))
@@ -91,6 +103,12 @@ func _setup_players():
 			var ai = AIScript.new()
 			ai.setup(self, i)
 			ais.append(ai)
+	var np = PlayerScript.new()
+	np.id = Data.NEUTRAL_ID
+	np.label = "중립"
+	np.color = Color(0.55, 0.6, 0.35)
+	np.neutral = true
+	players.append(np)
 
 func _mirror(p):
 	return Vector2(Data.MAP_SIZE.x - p.x, p.y)
@@ -119,8 +137,15 @@ func _setup_map():
 		expansions.append(e)
 		if e.x < 1500:
 			expansions.append(_mirror(e))
+	# 중립 무리: 기지 근처 유충(소형), 측면 거미(중형), 중앙 고목을 지키는 사마귀(대형)
+	for c in [[Vector2(640, 600), ["grub", "grub"]], [Vector2(640, 1400), ["grub", "grub"]],
+			[Vector2(1200, 640), ["spider"]], [Vector2(1200, 1360), ["spider"]]]:
+		_add_camp(c[0], c[1])
+		_add_camp(_mirror(c[0]), c[1])
+	_add_camp(Vector2(1600, 880), ["mantis"])
+	drop_rng.seed = 11
 	var starts = [start, _mirror(start)]
-	for i in players.size():
+	for i in 2:
 		var nest = spawn_building(i, "nest", starts[i], true, true)
 		nest.rally_node = nearest_node(nest.position, "food", null)
 		for k in Data.START_WORKERS:
@@ -139,6 +164,76 @@ func _add_node(kind, pos):
 	n.setup(self, kind, pos)
 	world.add_child(n)
 	res_nodes.append(n)
+	return n
+
+func _add_camp(pos, kinds):
+	camps.append({"pos": pos, "kinds": kinds, "units": [], "respawn": 0.0})
+	_spawn_camp(camps.size() - 1)
+
+func _spawn_camp(ci):
+	var c = camps[ci]
+	c["units"] = []
+	for k in c["kinds"].size():
+		var off = Vector2(30, 0).rotated(k * TAU / max(1, c["kinds"].size())) if c["kinds"].size() > 1 else Vector2.ZERO
+		var u = spawn_unit(Data.NEUTRAL_ID, c["kinds"][k], c["pos"] + off)
+		u.camp = ci
+		c["units"].append(u)
+
+func alert_camp(ci, attacker):
+	if ci < 0:
+		return
+	for u in camps[ci]["units"]:
+		if is_instance_valid(u) and not u.dead and u.target == null and u.state != UnitScript.ATTACK:
+			if u.position.distance_to(u.home) < 80.0:
+				u.target = attacker
+				u.resume_amove = false
+				u.state = UnitScript.ATTACK
+
+func spawn_corpse(pos, amount):
+	# 다른 자원 지점과 겹치지 않게 살짝 비켜 놓는다
+	for i in 8:
+		var ok = true
+		for n in res_nodes:
+			if n.position.distance_to(pos) < n.radius + 30.0:
+				ok = false
+				break
+		if ok:
+			break
+		pos += Vector2(30, 0).rotated(i * 1.7)
+	var n = _add_node("corpse", pos)
+	n.set_amount(amount)
+	return n
+
+func _tick_map(delta):
+	for ci in camps.size():
+		var c = camps[ci]
+		var alive = false
+		for u in c["units"]:
+			if is_instance_valid(u) and not u.dead:
+				alive = true
+		if alive:
+			continue
+		if c["respawn"] <= 0.0:
+			c["respawn"] = Data.NEUTRAL_RESPAWN
+		else:
+			c["respawn"] -= delta
+			if c["respawn"] <= 0.0:
+				_spawn_camp(ci)
+	drop_t += delta
+	if drop_t >= Data.CENTER_DROP_EVERY:
+		drop_t = 0.0
+		var pos = Vector2(1600 + drop_rng.randf_range(-160, 160), 1000 + drop_rng.randf_range(-320, 320))
+		spawn_corpse(pos, Data.CENTER_DROP_AMOUNT)
+		if not autotest:
+			msg("맵 중앙에 큰 사체가 떨어졌습니다")
+
+func on_aphid_slain(n, pid):
+	if pid == human_id and not autotest:
+		msg("진딧물 도살: 식량 +%d" % int(Data.APHID_SLAY_FOOD))
+	elif not autotest and fog.is_explored_at(n.position):
+		var mine = nearest_nest(human_id, n.position)
+		if mine != null and mine.position.distance_to(n.position) < 700.0:
+			msg("진딧물 군락이 도살당했습니다")
 
 func spawn_unit(pid, kind, pos):
 	var u = UnitScript.new()
@@ -216,6 +311,17 @@ func _cell(p):
 
 func _rebuild_grid():
 	grid.clear()
+	detectors.clear()
+	for b in buildings:
+		if b.kind == "nest" and b.built:
+			if not detectors.has(b.pid):
+				detectors[b.pid] = []
+			detectors[b.pid].append([b.position, Data.DETECT_NEST])
+	for u in units:
+		if u.detect_range() > 0.0:
+			if not detectors.has(u.pid):
+				detectors[u.pid] = []
+			detectors[u.pid].append([u.position, u.detect_range()])
 	for u in units:
 		var c = _cell(u.position)
 		if grid.has(c):
@@ -242,11 +348,30 @@ func tyrant_near(pos, pid):
 			return true
 	return false
 
+func is_detected(e, by_pid):
+	if not detectors.has(by_pid):
+		return false
+	for dd in detectors[by_pid]:
+		if dd[0].distance_to(e.position) <= dd[1]:
+			return true
+	return false
+
+# 공격할 수 있는 적인가: 은신 중이면 감지되어야 하고, 중립 생물은 나를 공격하고 있을 때만
+func is_hostile_target(u, pid):
+	if u.pid == pid or u.dead:
+		return false
+	if u.stealthed and not is_detected(u, pid):
+		return false
+	if u.is_neutral and pid != Data.NEUTRAL_ID:
+		var t = u.target
+		return t != null and is_instance_valid(t) and t.get("pid") == pid
+	return true
+
 func find_enemy_unit(pos, pid, r, hits_air = true):
 	var best = null
 	var bd = r
 	for u in query_units(pos, r):
-		if u.pid != pid and (hits_air or not u.air):
+		if is_hostile_target(u, pid) and (hits_air or not u.air):
 			var dd = u.position.distance_to(pos)
 			if dd <= bd:
 				bd = dd
@@ -260,7 +385,7 @@ func find_enemy(pos, pid, r, hits_air = true):
 	var best = null
 	var bd = r
 	for b in buildings:
-		if b.pid != pid and not b.dead:
+		if b.pid != pid and not b.dead and pid != Data.NEUTRAL_ID:
 			var dd = b.position.distance_to(pos) - b.radius
 			if dd <= bd:
 				bd = dd
@@ -467,6 +592,9 @@ func on_research_done(pid, id):
 		msg("연구 완료: %s" % Data.RESEARCH[id]["name"])
 
 func on_unit_death(u):
+	if u.is_neutral:
+		spawn_corpse(u.position, u.d["corpse"])
+		return
 	if u.is_worker:
 		return
 	var p = players[u.pid]
@@ -553,6 +681,8 @@ func _entity_at(pos):
 	var best = null
 	var bd = 1e9
 	for u in query_units(pos, 16.0):
+		if not u.visible:
+			continue
 		var dd = u.position.distance_to(pos)
 		if dd < bd:
 			bd = dd
@@ -560,7 +690,7 @@ func _entity_at(pos):
 	if best != null:
 		return best
 	for b in buildings:
-		if b.position.distance_to(pos) <= b.radius:
+		if b.visible and b.position.distance_to(pos) <= b.radius:
 			return b
 	for n in res_nodes:
 		if n.position.distance_to(pos) <= n.radius:
@@ -767,6 +897,8 @@ func _right_click(wp):
 		for u in us:
 			if u.is_worker:
 				u.cmd_gather(e)
+			elif e.attackable() and u.can_fight and u.can_hit(e):
+				u.cmd_attack(e)
 			else:
 				rest.append(u)
 		order_move(rest, wp, false)
@@ -799,7 +931,33 @@ func _process(delta):
 	for s in shots:
 		s[2] -= delta
 	shots = shots.filter(func(s): return s[2] > 0.0)
+	fog_t -= real
+	if fog_t <= 0.0:
+		fog_t = 0.15
+		_update_fog()
 	overlay.queue_redraw()
+
+func _update_fog():
+	fog.recompute(self, human_id)
+	for u in units:
+		if u.pid == human_id:
+			u.visible = true
+			u.modulate.a = 0.5 if u.stealthed else 1.0
+		else:
+			u.visible = fog.is_visible_at(u.position) and (not u.stealthed or is_detected(u, human_id))
+	for b in buildings:
+		if b.pid == human_id:
+			b.visible = true
+		else:
+			if fog.is_visible_at(b.position):
+				b.seen = true
+			b.visible = b.seen
+	for n in res_nodes:
+		# 사체는 지금 보이는 곳에서만 새로 나타난다
+		if n.kind == "corpse" and not n.visible:
+			n.visible = fog.is_visible_at(n.position)
+		elif n.kind == "corpse" and not fog.is_explored_at(n.position):
+			n.visible = false
 
 func _physics_process(delta):
 	if game_over:
@@ -828,8 +986,9 @@ func _physics_process(delta):
 	for p in players:
 		p.pop_cap += 10.0 * p.level("colony")
 		p.pop_cap = min(p.pop_cap, Data.POP_MAX)
-		if p.alive and not has_nest[p.id] and not sandbox:
+		if p.alive and not p.neutral and not has_nest[p.id] and not sandbox:
 			_eliminate(p)
+	_tick_map(delta)
 	for ai in ais:
 		ai.tick(delta)
 	_check_end()
@@ -859,7 +1018,7 @@ func _check_end():
 		return
 	var alive = []
 	for p in players:
-		if p.alive:
+		if p.alive and not p.neutral:
 			alive.append(p.id)
 	var over = alive.size() <= 1
 	if not autotest and not players[human_id].alive:
@@ -879,6 +1038,8 @@ func _check_end():
 
 func _report():
 	for p in players:
+		if p.neutral:
+			continue
 		var nu = 0
 		var nw = 0
 		for u in units:
@@ -907,7 +1068,8 @@ func _draw():
 
 func _draw_overlay():
 	for s in shots:
-		overlay.draw_line(s[0], s[1], s[3], 2.0)
+		if fog.is_visible_at(s[0]) or fog.is_visible_at(s[1]):
+			overlay.draw_line(s[0], s[1], s[3], 2.0)
 	if dragging:
 		var r = Rect2(drag_from, get_global_mouse_position() - drag_from).abs()
 		overlay.draw_rect(r, Color(0.3, 1.0, 0.3, 0.15))

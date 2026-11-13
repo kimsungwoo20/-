@@ -23,6 +23,11 @@ var venom_stacks = 0
 var venom_t = 0.0
 var alarm_stacks = 0
 var alarm_t = 0.0
+var stealthed = false    # 은신 중이면 감지 범위 밖의 적에게 보이지도, 공격받지도 않는다
+var is_neutral = false
+var camp = -1
+var home = Vector2.ZERO
+var wander_t = 0.0
 var dead = false
 var selected = false
 var facing = 0.0
@@ -46,7 +51,13 @@ func setup(g, p, k, pos):
 	game = g
 	pid = p
 	kind = k
-	d = Data.UNITS[k]
+	if Data.UNITS.has(k):
+		d = Data.UNITS[k]
+	else:
+		d = Data.NEUTRALS[k]
+	is_neutral = (p == Data.NEUTRAL_ID)
+	home = pos
+	wander_t = randf_range(2.0, 6.0)
 	base_hp = d["hp"]
 	max_hp = d["hp"]
 	hp = max_hp
@@ -73,6 +84,14 @@ func refresh_hp():
 	var m = base_hp * game.players[pid].hp_mult(air)
 	hp += m - max_hp
 	max_hp = m
+
+func sight():
+	if d.has("sight"):
+		return d["sight"]
+	return Data.SIGHT_WORKER if is_worker else Data.SIGHT_UNIT
+
+func detect_range():
+	return d.get("detect", 0.0)
 
 func spd():
 	return d["speed"] * game.players[pid].speed_mult(air)
@@ -153,7 +172,9 @@ func _physics_process(delta):
 		IDLE:
 			if not rooted:
 				position += _separation() * delta
-			if not is_worker and can_fight:
+			if is_neutral:
+				_neutral_idle(delta)
+			elif not is_worker and can_fight:
 				_think(delta, false)
 		MOVE:
 			if _go(dest, delta, 6.0):
@@ -171,6 +192,23 @@ func _physics_process(delta):
 		BUILD:
 			_do_build(delta)
 	queue_redraw()
+
+# 중립 생물: 둥지 주변을 어슬렁거리다가, 너무 멀리 끌려 나오면 돌아가며 회복한다
+func _neutral_idle(delta):
+	hp = min(max_hp, hp + max_hp * 0.05 * delta)
+	wander_t -= delta
+	if wander_t <= 0.0:
+		wander_t = randf_range(3.0, 7.0)
+		dest = home + Vector2(randf_range(-40, 40), randf_range(-40, 40))
+		state = MOVE
+
+func _leash():
+	if is_neutral and position.distance_to(home) > Data.LEASH:
+		target = null
+		dest = home
+		state = MOVE
+		return true
+	return false
 
 func _valid(t):
 	return t != null and is_instance_valid(t) and not t.dead
@@ -192,6 +230,10 @@ func _think(delta, from_amove):
 	return true
 
 func _do_attack(delta):
+	if _leash():
+		return
+	if _valid(target) and target is Node2D and target.get("stealthed") and not game.is_detected(target, pid):
+		target = null
 	if not _valid(target) or not can_fight or not can_hit(target):
 		target = null
 		if resume_amove:
@@ -336,10 +378,29 @@ func take_damage(amount, attacker):
 		game.on_unit_death(self)
 		game.remove_unit(self)
 		return
-	if not is_worker and can_fight and state == IDLE and _valid(attacker) and can_hit(attacker):
+	if is_neutral and _valid(attacker):
+		game.alert_camp(camp, attacker)
+	if not is_worker and can_fight and (state == IDLE or (is_neutral and state == MOVE and position.distance_to(home) < 60.0)) and _valid(attacker) and can_hit(attacker):
 		target = attacker
 		resume_amove = false
 		state = ATTACK
+
+func _draw_neutral(c):
+	var r = radius
+	draw_set_transform(Vector2.ZERO, facing, Vector2.ONE)
+	for i in 3:
+		var x = (i - 1) * r * 0.5
+		draw_line(Vector2(x, -r * 1.1), Vector2(x, r * 1.1), c.darkened(0.4), 1.5)
+	draw_circle(Vector2(-r * 0.5, 0), r * 0.8, c.darkened(0.2))
+	draw_circle(Vector2(r * 0.55, 0), r * 0.5, c)
+	if kind == "mantis":
+		draw_line(Vector2(r * 0.8, -r * 0.3), Vector2(r * 1.6, -r * 0.8), c.lightened(0.2), 2.5)
+		draw_line(Vector2(r * 0.8, r * 0.3), Vector2(r * 1.6, r * 0.8), c.lightened(0.2), 2.5)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if hp < max_hp:
+		var w = r * 2.4
+		draw_rect(Rect2(-w / 2.0, -r - 8.0, w, 3.0), Color(0, 0, 0, 0.6))
+		draw_rect(Rect2(-w / 2.0, -r - 8.0, w * clamp(hp / max_hp, 0.0, 1.0), 3.0), Color(0.9, 0.8, 0.3))
 
 # ---------- 상태 효과 ----------
 
@@ -377,6 +438,9 @@ func _draw():
 	if selected:
 		draw_arc(Vector2.ZERO, radius + 5.0, 0.0, TAU, 20, Color(0.3, 1.0, 0.3), 1.5)
 	var r = radius
+	if is_neutral:
+		_draw_neutral(c)
+		return
 	if air:
 		draw_circle(Vector2(4, 10), r * 0.8, Color(0, 0, 0, 0.25))
 	if rooted:

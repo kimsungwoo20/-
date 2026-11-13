@@ -12,9 +12,12 @@ func _draw():
 	for n in game.res_nodes:
 		draw_rect(Rect2(n.position * s - Vector2(2, 2), Vector2(4, 4)), n.d["color"])
 	for b in game.buildings:
-		draw_rect(Rect2(b.position * s - Vector2(3, 3), Vector2(6, 6)), game.players[b.pid].color)
+		if b.visible:
+			draw_rect(Rect2(b.position * s - Vector2(3, 3), Vector2(6, 6)), game.players[b.pid].color)
 	for u in game.units:
-		draw_rect(Rect2(u.position * s - Vector2(1, 1), Vector2(2, 2)), game.players[u.pid].color.lightened(0.3))
+		if u.visible:
+			draw_rect(Rect2(u.position * s - Vector2(1, 1), Vector2(2, 2)), game.players[u.pid].color.lightened(0.3))
+	draw_texture_rect(game.fog.tex, Rect2(Vector2.ZERO, size), false)
 	var vs = get_viewport_rect().size / game.camera.zoom
 	var tl = (game.camera.position - vs / 2.0) * s
 	draw_rect(Rect2(tl, vs * s), Color(1, 1, 1, 0.8), false, 1.0)

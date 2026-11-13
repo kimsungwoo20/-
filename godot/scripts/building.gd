@@ -23,6 +23,8 @@ var rally_node = null
 var atk_cd = 0.0
 var venom_stacks = 0
 var venom_t = 0.0
+var seen = false        # 사람 플레이어가 한 번이라도 본 적 있는 적 건물만 보인다
+var stealthed = false
 
 func setup(g, p, k, pos, finished, main):
 	game = g
@@ -40,6 +42,9 @@ func setup(g, p, k, pos, finished, main):
 	else:
 		hp = max_hp * 0.1
 	rally_pos = pos + (Data.MAP_SIZE / 2.0 - pos).normalized() * (radius + 40.0)
+
+func sight():
+	return Data.SIGHT_NEST if kind == "nest" else Data.SIGHT_BUILDING
 
 func display_name():
 	if kind == "nest":
