@@ -3,7 +3,7 @@ const Data = preload("res://scripts/data.gd")
 const Minimap = preload("res://scripts/minimap.gd")
 const UnitScript = preload("res://scripts/unit.gd")
 
-const KEYS = ["Q", "W", "E", "R", "T", "", "", ""]
+const KEYS = ["Q", "W", "E", "R", "T", "A", "S", "D", "F", "G", "Z", "X", "C", "V", "B"]
 
 var game
 var root
@@ -57,14 +57,16 @@ func setup(g):
 
 	info_label = _label(14)
 	info_label.position = Vector2(234, 8)
-	info_label.size = Vector2(420, 134)
+	info_label.size = Vector2(400, 134)
 	info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info_label.clip_text = true
 	panel.add_child(info_label)
 
 	grid = GridContainer.new()
-	grid.columns = 4
-	grid.position = Vector2(670, 8)
+	grid.columns = 5
+	grid.position = Vector2(648, 6)
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
 	panel.add_child(grid)
 
 func _label(font_size):
@@ -118,8 +120,8 @@ func _rebuild():
 	cmds = game.get_commands()
 	for i in cmds.size():
 		var b = Button.new()
-		b.custom_minimum_size = Vector2(142, 62)
-		b.add_theme_font_size_override("font_size", 13)
+		b.custom_minimum_size = Vector2(122, 43)
+		b.add_theme_font_size_override("font_size", 12)
 		b.focus_mode = Control.FOCUS_NONE
 		b.pressed.connect(_on_btn.bind(i))
 		grid.add_child(b)
@@ -135,6 +137,10 @@ func _update_buttons():
 		buttons[i].text = key + c["text"]
 		buttons[i].tooltip_text = c["tip"]
 		buttons[i].disabled = not c["enabled"]
+		# 빈칸은 자리만 차지하고 보이지 않는다(격자 위치 유지)
+		buttons[i].modulate.a = 0.0 if c.get("blank", false) else 1.0
+		if c.get("blank", false):
+			buttons[i].text = ""
 
 func _process(delta):
 	var real = delta / max(Engine.time_scale, 0.001)

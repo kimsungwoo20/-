@@ -10,10 +10,16 @@ var wave_size = 10
 var attacking = false
 var defend_pos = Vector2.ZERO
 var defend_t = 0.0
+var branch_pick = "wave"
+# "branch" 자리에서 분기 진화(둘 중 무작위)를 고른다
+const RESEARCH_ORDER = ["carry1", "jaw1", "shell1", "spawn1", "colony1", "multiqueen", "alarm", "jaw2",
+	"venom1", "shell2", "carry2", "nursery1", "colony2", "gland1", "size1", "tyrant_blood", "branch",
+	"jaw3", "shell3", "troph1", "legs1", "size2", "nursery2", "gland2", "troph2", "flight1", "spawn2", "gland3"]
 
 func setup(g, id):
 	game = g
 	pid = id
+	branch_pick = ["wave", "burn"][randi() % 2]
 
 func on_attacked(b):
 	defend_pos = b.position
@@ -115,17 +121,21 @@ func tick(delta):
 			# 식량이 남아돌면 생산 건물을 늘려 소비한다
 			_build("combat", main.position, workers)
 
-	# 연구
-	if lab != null and lab.queue.is_empty():
-		for id in ["carry1", "jaw1", "shell1", "colony1"]:
-			if not p.research.has(id):
-				game.enqueue_research(lab, id)
+	# 연구: 우선순위 목록에서 지금 예약할 수 있는 첫 연구
+	if lab != null and lab.queue.size() < 2:
+		for id in RESEARCH_ORDER:
+			if id == "branch":
+				id = branch_pick
+			var r = Data.RESEARCH[id]
+			if game.research_state(lab, id) == "ok":
+				if p.can_afford(r["food"], r["mat"] + 100):
+					game.enqueue_research(lab, id)
 				break
 
 	# 병력 생산
 	for b in combats:
 		if b.queue.size() < 2:
-			if main.tier >= 3 and p.mat >= 200.0 and p.food >= 300.0 and randf() < 0.3:
+			if p.has("tyrant_blood") and p.mat >= 200.0 and p.food >= 300.0 and randf() < 0.3:
 				game.enqueue_unit(b, "tyrant")
 			elif main.tier >= 2 and p.mat >= 80.0 and randf() < 0.4:
 				game.enqueue_unit(b, "sprayer")

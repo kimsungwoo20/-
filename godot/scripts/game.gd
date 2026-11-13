@@ -10,6 +10,7 @@ const AIScript = preload("res://scripts/ai.gd")
 const HudScript = preload("res://scripts/hud.gd")
 
 const CELL = 64.0
+const HOTKEYS = [KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B]
 
 var players = []
 var units = []
@@ -36,6 +37,7 @@ var world
 var decor = []
 
 var build_mode = ""
+var lab_tab = "body"
 var amove_armed = false
 var dragging = false
 var drag_from = Vector2.ZERO
@@ -62,6 +64,12 @@ func _ready():
 	var m = main_nest(human_id)
 	if m != null:
 		camera.position = m.position
+	# 웹 주소 끝에 ?debug 를 붙이면 자원 5000 으로 시작(점검용)
+	if OS.has_feature("web"):
+		var q = str(JavaScriptBridge.eval("window.location.search", true))
+		if q.contains("debug"):
+			players[human_id].food = 5000.0
+			players[human_id].mat = 5000.0
 	if autotest:
 		Engine.time_scale = 8.0
 		Engine.max_physics_steps_per_frame = 16
@@ -170,6 +178,9 @@ func remove_building(b):
 		selection.erase(b)
 	sel_version += 1
 	var p = players[b.pid]
+	if b.kind == "lab":
+		# 완료한 연구는 유지되고, 진행 중이거나 예약한 연구는 전액 환불
+		b.refund_queue()
 	if b.kind == "nest" and b.is_main:
 		# 여왕 계승: 가장 가까운 위성 둥지가 주 둥지가 되고 등급이 1단계 내려간다
 		var best = null
@@ -179,10 +190,15 @@ func remove_building(b):
 					best = o
 		if best != null:
 			best.is_main = true
-			best.tier = max(1, b.tier - 1)
-			p.succession = Data.SUCCESSION_TIME
-			if b.pid == human_id:
-				msg("주 둥지가 파괴되었습니다. 여왕 계승 중 (일꾼 생산 60초 정지)")
+			if p.has("multiqueen"):
+				best.tier = b.tier
+				if b.pid == human_id:
+					msg("주 둥지가 파괴되었습니다. 다여왕 군체: 즉시 계승")
+			else:
+				best.tier = max(1, b.tier - 1)
+				p.succession = Data.SUCCESSION_TIME
+				if b.pid == human_id:
+					msg("주 둥지가 파괴되었습니다. 여왕 계승 중 (일꾼 생산 60초 정지)")
 	b.queue_free()
 
 func on_building_done(_b):
@@ -372,22 +388,27 @@ func enqueue_unit(b, id):
 	if main_tier(b.pid) < d["tier"]:
 		_say(b.pid, "주 둥지 등급이 부족합니다")
 		return false
+	if d.has("needs") and not p.has(d["needs"]):
+		_say(b.pid, "%s 연구가 필요합니다" % Data.RESEARCH[d["needs"]]["name"])
+		return false
 	if not p.can_afford(d["food"], d["mat"]):
 		_say(b.pid, "자원이 부족합니다")
 		return false
 	p.pay(d["food"], d["mat"])
+	var n = p.batch(id)
 	b.queue.append({"type": "unit", "id": id, "time": d["time"], "progress": 0.0, "started": false,
-		"pop": d["pop"], "food": d["food"], "mat": d["mat"]})
+		"pop": d["pop"] / float(d["batch"]) * n, "batch": n, "food": d["food"], "mat": d["mat"]})
 	return true
 
 func enqueue_research(b, id):
 	var p = players[b.pid]
 	var d = Data.RESEARCH[id]
-	if not b.built or p.research.has(id) or b.queue.size() >= 3:
+	if not b.built or b.queue.size() >= Data.RESEARCH_QUEUE:
 		return false
-	for it in b.queue:
-		if it["id"] == id:
-			return false
+	var st = research_state(b, id)
+	if st != "ok":
+		_say(b.pid, research_reason(st, id))
+		return false
 	if not p.can_afford(d["food"], d["mat"]):
 		_say(b.pid, "자원이 부족합니다")
 		return false
@@ -396,6 +417,78 @@ func enqueue_research(b, id):
 		"pop": 0.0, "food": d["food"], "mat": d["mat"]})
 	sel_version += 1
 	return true
+
+func _queued(b, id):
+	for it in b.queue:
+		if it["id"] == id:
+			return true
+	return false
+
+# 연구 상태: done / queued / tier / req / taken(분기에서 다른 쪽 선택) / ok
+func research_state(b, id):
+	var p = players[b.pid]
+	var r = Data.RESEARCH[id]
+	if p.has(id):
+		return "done"
+	if _queued(b, id):
+		return "queued"
+	if r["group"] != "":
+		for other in Data.RESEARCH:
+			if other != id and Data.RESEARCH[other]["group"] == r["group"] and (p.has(other) or _queued(b, other)):
+				return "taken"
+	if main_tier(b.pid) < r["tier"]:
+		return "tier"
+	# 선행 연구는 완료했거나 바로 앞에 예약되어 있으면 된다
+	if r["req"] != "" and not p.has(r["req"]) and not _queued(b, r["req"]):
+		return "req"
+	return "ok"
+
+func research_reason(st, id):
+	var r = Data.RESEARCH[id]
+	match st:
+		"done":
+			return "이미 완료한 연구입니다"
+		"queued":
+			return "이미 예약한 연구입니다"
+		"taken":
+			return "다른 분기 진화를 이미 선택했습니다"
+		"tier":
+			return "주 둥지 %s 등급이 필요합니다" % ["I", "II", "III"][r["tier"] - 1]
+		"req":
+			return "%s 연구가 먼저 필요합니다" % Data.RESEARCH[r["req"]]["name"]
+	return ""
+
+func on_research_done(pid, id):
+	if id == "size1" or id == "size2" or id == "flight1":
+		for u in units:
+			if u.pid == pid:
+				u.refresh_hp()
+	if pid == human_id and not autotest:
+		msg("연구 완료: %s" % Data.RESEARCH[id]["name"])
+
+func on_unit_death(u):
+	if u.is_worker:
+		return
+	var p = players[u.pid]
+	if p.has("alarm"):
+		for o in query_units(u.position, Data.ALARM_RADIUS):
+			if o.pid == u.pid and o != u and not o.is_worker and o.can_fight:
+				o.add_alarm()
+	if u.kind == "stinger" or u.kind == "soldier":
+		var nurse_near = false
+		for o in query_units(u.position, Data.NURSE_RADIUS):
+			if o.pid == u.pid and o.kind == "nurse":
+				nurse_near = true
+				break
+		if nurse_near:
+			# 가장 가까운, 유닛을 생산 중인 건물의 진행도를 앞당긴다
+			var best = null
+			for b in buildings:
+				if b.pid == u.pid and b.built and b.kind != "lab" and b.queue.size() > 0 and b.queue[0]["started"] and b.queue[0]["type"] == "unit":
+					if best == null or b.position.distance_to(u.position) < best.position.distance_to(u.position):
+						best = b
+			if best != null:
+				best.queue[0]["progress"] += Data.NURSE_REFUND
 
 func start_upgrade(b):
 	var p = players[b.pid]
@@ -490,27 +583,47 @@ func get_commands():
 			txt += "\n식량 %d" % d["food"]
 			if d["mat"] > 0:
 				txt += " 재료 %d" % d["mat"]
-			cmds.append({"text": txt, "tip": "인구 %s, %d초" % [str(d["pop"]), int(d["time"])],
-				"enabled": main_tier(human_id) >= d["tier"], "call": enqueue_unit.bind(b, id)})
+			var n = p.batch(id)
+			if n != d["batch"]:
+				txt = txt.replace("×%d" % d["batch"], "×%d" % n)
+			var tip = "인구 %s, %d초" % [str(d["pop"] / float(d["batch"]) * n), int(d["time"])]
+			var ok = main_tier(human_id) >= d["tier"]
+			if not ok:
+				tip = "주 둥지 %s 등급 필요\n" % ["I", "II", "III"][d["tier"] - 1] + tip
+			if d.has("needs") and not p.has(d["needs"]):
+				ok = false
+				tip = "%s 연구 필요\n" % Data.RESEARCH[d["needs"]]["name"] + tip
+			cmds.append({"text": txt, "tip": tip, "enabled": ok, "call": enqueue_unit.bind(b, id)})
 		if b.kind == "nest" and b.is_main and b.tier < 3 and b.upgrade_t < 0.0:
 			var up = Data.NEST_UPGRADE[b.tier + 1]
 			cmds.append({"text": "둥지 등급 상승\n재료 %d" % up["mat"], "tip": "상위 유닛과 인구 한도 해금",
 				"enabled": true, "call": start_upgrade.bind(b)})
 		if b.kind == "lab":
+			for tab in [["body", "신체 진화"], ["colony", "군체 진화"], ["unique", "고유 진화"]]:
+				var label = tab[1]
+				if lab_tab == tab[0]:
+					label = "▶ " + label
+				cmds.append({"text": label, "tip": "", "enabled": true, "call": _set_lab_tab.bind(tab[0])})
+			cmds.append({"text": "마지막 예약 취소", "tip": "전액 환불", "enabled": b.queue.size() > 0, "call": cancel_last.bind(b)})
+			cmds.append({"text": "", "tip": "", "enabled": false, "blank": true, "call": func(): pass})
+			var shown = {}
 			for id in Data.RESEARCH:
-				if p.research.has(id):
-					continue
-				var queued = false
-				for it in b.queue:
-					if it["id"] == id:
-						queued = true
-				if queued:
-					continue
 				var r = Data.RESEARCH[id]
+				if r["cat"] != lab_tab or shown.has(r["line"]):
+					continue
+				var st = research_state(b, id)
+				if st == "done" or st == "queued":
+					continue
+				# 단계가 있는 연구는 다음 단계 하나만 보여 준다
+				shown[r["line"]] = true
 				var t2 = "%s\n재료 %d" % [r["name"], r["mat"]]
 				if r["food"] > 0:
 					t2 += " 식량 %d" % r["food"]
-				cmds.append({"text": t2, "tip": r["tip"], "enabled": true, "call": enqueue_research.bind(b, id)})
+				var tip = "%s (%d초)" % [r["tip"], int(r["time"])]
+				if st != "ok":
+					tip = research_reason(st, id) + "\n" + tip
+				cmds.append({"text": t2, "tip": tip, "enabled": st == "ok", "call": enqueue_research.bind(b, id)})
+			return cmds
 		if b.queue.size() > 0:
 			cmds.append({"text": "마지막 예약 취소", "tip": "전액 환불", "enabled": true, "call": cancel_last.bind(b)})
 		return cmds
@@ -533,6 +646,10 @@ func get_commands():
 		cmds.append({"text": "거점화 / 해제", "tip": "이동 불가, 받는 피해 60% 감소",
 			"enabled": true, "call": _toggle_root})
 	return cmds
+
+func _set_lab_tab(tab):
+	lab_tab = tab
+	sel_version += 1
 
 func _toggle_root():
 	# 하나라도 풀려 있으면 전부 거점화, 모두 거점화 상태면 전부 해제
@@ -588,30 +705,21 @@ func _unhandled_input(ev):
 	elif ev is InputEventMouseMotion and pan_drag:
 		camera.position -= ev.relative / camera.zoom.x
 	elif ev is InputEventKey and ev.pressed and not ev.echo:
-		match ev.keycode:
-			KEY_A:
-				if sel_units().size() > 0:
-					amove_armed = true
-					build_mode = ""
-			KEY_S:
-				for u in sel_units():
-					u.cmd_stop()
-			KEY_ESCAPE:
-				if build_mode != "" or amove_armed:
-					build_mode = ""
-					amove_armed = false
-				else:
-					set_selection([])
-			KEY_Q:
-				hud.press_button(0)
-			KEY_W:
-				hud.press_button(1)
-			KEY_E:
-				hud.press_button(2)
-			KEY_R:
-				hud.press_button(3)
-			KEY_T:
-				hud.press_button(4)
+		var has_units = sel_units().size() > 0
+		if ev.keycode == KEY_A and has_units:
+			amove_armed = true
+			build_mode = ""
+		elif ev.keycode == KEY_S and has_units:
+			for u in sel_units():
+				u.cmd_stop()
+		elif ev.keycode == KEY_ESCAPE:
+			if build_mode != "" or amove_armed:
+				build_mode = ""
+				amove_armed = false
+			else:
+				set_selection([])
+		elif HOTKEYS.has(ev.keycode):
+			hud.press_button(HOTKEYS.find(ev.keycode))
 
 func _zoom(f):
 	var z = clamp(camera.zoom.x * f, 0.45, 1.8)
@@ -718,8 +826,7 @@ func _physics_process(delta):
 			else:
 				p.pop_cap += Data.SAT_POP
 	for p in players:
-		if p.research.has("colony1"):
-			p.pop_cap += 10.0
+		p.pop_cap += 10.0 * p.level("colony")
 		p.pop_cap = min(p.pop_cap, Data.POP_MAX)
 		if p.alive and not has_nest[p.id] and not sandbox:
 			_eliminate(p)

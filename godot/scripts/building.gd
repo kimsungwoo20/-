@@ -21,6 +21,8 @@ var reserved_pop = 0.0
 var rally_pos = Vector2.ZERO
 var rally_node = null
 var atk_cd = 0.0
+var venom_stacks = 0
+var venom_t = 0.0
 
 func setup(g, p, k, pos, finished, main):
 	game = g
@@ -55,8 +57,24 @@ func add_build(delta):
 		built = true
 		game.on_building_done(self)
 
+func add_venom(cap, burn):
+	# 독은 "타오르는 독" 분기 진화가 있어야 건물에 들어간다
+	if cap <= 0 or not burn:
+		return
+	venom_stacks = min(venom_stacks + 1, cap)
+	venom_t = Data.VENOM_TIME
+
 func _physics_process(delta):
-	if dead or not built:
+	if dead:
+		return
+	if venom_stacks > 0:
+		venom_t -= delta
+		take_damage(Data.VENOM_DPS * venom_stacks * delta, null)
+		if venom_t <= 0.0:
+			venom_stacks = 0
+		if dead:
+			return
+	if not built:
 		queue_redraw()
 		return
 	var p = game.players[pid]
@@ -85,8 +103,13 @@ func _physics_process(delta):
 				it["started"] = true
 		if not blocked:
 			var speed = 1.0
-			if kind == "nest" and not is_main:
-				speed = 1.0 / 1.5      # 위성 둥지는 여왕이 없어 일꾼 생산이 느리다
+			if it["type"] == "unit":
+				if it["id"] == "worker":
+					if not is_main and not p.has("multiqueen"):
+						speed /= 1.5      # 위성 둥지는 여왕이 없어 일꾼 생산이 느리다
+					speed /= 1.0 - 0.15 * p.level("spawn")
+				else:
+					speed /= 1.0 - 0.1 * p.level("nursery")
 			it["progress"] += delta * speed
 			if it["progress"] >= it["time"]:
 				queue.pop_front()
@@ -99,7 +122,7 @@ func _complete(it):
 		var dir = (rally_pos - position).normalized()
 		if dir == Vector2.ZERO:
 			dir = Vector2.RIGHT
-		var n = Data.UNITS[it["id"]]["batch"]
+		var n = it.get("batch", 1)
 		for i in n:
 			var off = dir.rotated((i - (n - 1) / 2.0) * 0.5) * (radius + 12.0)
 			var u = game.spawn_unit(pid, it["id"], position + off)
@@ -118,6 +141,7 @@ func _complete(it):
 				u.cmd_move(rally_pos + Vector2(randf_range(-20, 20), randf_range(-20, 20)))
 	elif it["type"] == "research":
 		game.players[pid].research[it["id"]] = true
+		game.on_research_done(pid, it["id"])
 		game.on_building_done(self)
 
 func _defend(delta):
@@ -181,6 +205,8 @@ func _draw():
 	draw_string(font, Vector2(-80, radius + 16.0), d["name"], HORIZONTAL_ALIGNMENT_CENTER, 160, 12, Color(1, 1, 1, 0.85))
 	var w = radius * 2.0
 	var y = -radius - 20.0
+	if venom_stacks > 0:
+		draw_circle(Vector2(radius * 0.7, -radius * 0.7), 3.0 + venom_stacks * 0.4, Color(0.7, 1.0, 0.2, 0.9))
 	if hp < max_hp or selected:
 		draw_rect(Rect2(-w / 2.0, y, w, 4.0), Color(0, 0, 0, 0.6))
 		draw_rect(Rect2(-w / 2.0, y, w * clamp(hp / max_hp, 0.0, 1.0), 4.0), Color(0.3, 0.9, 0.3))

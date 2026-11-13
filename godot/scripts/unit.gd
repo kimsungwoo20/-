@@ -18,6 +18,11 @@ var hits_air = false
 var rooted = false
 var buffed = false
 var aura_t = 0.0
+var base_hp = 1.0
+var venom_stacks = 0
+var venom_t = 0.0
+var alarm_stacks = 0
+var alarm_t = 0.0
 var dead = false
 var selected = false
 var facing = 0.0
@@ -42,6 +47,7 @@ func setup(g, p, k, pos):
 	pid = p
 	kind = k
 	d = Data.UNITS[k]
+	base_hp = d["hp"]
 	max_hp = d["hp"]
 	hp = max_hp
 	radius = d["radius"]
@@ -50,6 +56,8 @@ func setup(g, p, k, pos):
 	air = d.get("air", false)
 	can_fight = d["dmg"] > 0.0
 	hits_air = d.get("hits_air", d["reach"] > 30.0)
+	refresh_hp()
+	hp = max_hp
 	position = pos
 	think = randf() * 0.3
 
@@ -59,6 +67,15 @@ func _leave():
 	if in_slot and node != null and is_instance_valid(node):
 		node.release_slot(self)
 	in_slot = false
+
+# 체력 연구가 끝나면 늘어난 만큼 현재 체력도 올린다
+func refresh_hp():
+	var m = base_hp * game.players[pid].hp_mult(air)
+	hp += m - max_hp
+	max_hp = m
+
+func spd():
+	return d["speed"] * game.players[pid].speed_mult(air)
 
 func can_hit(t):
 	return hits_air or not t.air
@@ -124,6 +141,9 @@ func _physics_process(delta):
 	if dead:
 		return
 	cd -= delta
+	_tick_status(delta)
+	if dead:
+		return
 	if kind == "stinger":
 		aura_t -= delta
 		if aura_t <= 0.0:
@@ -190,12 +210,19 @@ func _do_attack(delta):
 			cd = d["cd"]
 			if buffed:
 				cd *= Data.TYRANT_CD_MULT
+			if alarm_stacks > 0:
+				cd *= 1.0 - 0.1 * alarm_stacks
+			var p = game.players[pid]
 			var dmg = d["dmg"]
-			if d["reach"] <= 30.0 and game.players[pid].research.has("jaw1"):
-				dmg *= 1.1
+			if d["reach"] <= 30.0:
+				dmg *= p.melee_mult()
+			else:
+				dmg *= p.ranged_mult()
 			if d["reach"] > 30.0:
 				game.add_shot(position, target.position, Color(0.8, 1.0, 0.3))
 			target.take_damage(dmg, self)
+			if not is_worker and _valid(target):
+				target.add_venom(p.venom_cap(), p.has("burn"))
 	elif rooted:
 		# 거점화 중에는 쫓아가지 않는다
 		target = null
@@ -227,9 +254,7 @@ func _do_gather(delta):
 		return
 	work -= delta
 	if work <= 0.0:
-		var cap = Data.CARRY
-		if game.players[pid].research.has("carry1"):
-			cap += 2.0
+		var cap = game.players[pid].carry_amount()
 		carry_res = node.res_type()
 		last_res = carry_res
 		var n = node
@@ -273,7 +298,7 @@ func _go(p, delta, stop):
 	var dist = to.length()
 	if dist <= stop:
 		return true
-	var v = to / dist * d["speed"] + _separation()
+	var v = to / dist * spd() + _separation()
 	position += v * delta
 	position = position.clamp(Vector2(10, 10), Data.MAP_SIZE - Vector2(10, 10))
 	facing = to.angle()
@@ -301,20 +326,49 @@ func _separation():
 func take_damage(amount, attacker):
 	if dead:
 		return
-	if game.players[pid].research.has("shell1"):
-		amount *= 0.92
+	amount *= game.players[pid].taken_mult()
 	if rooted:
 		amount *= Data.ROOT_DAMAGE_MULT
 	hp -= amount
 	if hp <= 0.0:
 		dead = true
 		_leave()
+		game.on_unit_death(self)
 		game.remove_unit(self)
 		return
 	if not is_worker and can_fight and state == IDLE and _valid(attacker) and can_hit(attacker):
 		target = attacker
 		resume_amove = false
 		state = ATTACK
+
+# ---------- 상태 효과 ----------
+
+func add_venom(cap, _burn):
+	if cap <= 0:
+		return
+	venom_stacks = min(venom_stacks + 1, cap)
+	venom_t = Data.VENOM_TIME
+
+func add_alarm():
+	alarm_stacks = min(alarm_stacks + 1, Data.ALARM_STACKS)
+	alarm_t = Data.ALARM_TIME
+
+func _tick_status(delta):
+	if alarm_t > 0.0:
+		alarm_t -= delta
+		if alarm_t <= 0.0:
+			alarm_stacks = 0
+	if venom_stacks > 0:
+		venom_t -= delta
+		# 독 피해는 방어 연구를 무시하고 그대로 들어간다
+		hp -= Data.VENOM_DPS * venom_stacks * delta
+		if venom_t <= 0.0:
+			venom_stacks = 0
+		if hp <= 0.0:
+			dead = true
+			_leave()
+			game.on_unit_death(self)
+			game.remove_unit(self)
 
 # ---------- 그리기 ----------
 
@@ -347,6 +401,10 @@ func _draw():
 			cc = Data.MAT_COLOR
 		draw_circle(Vector2(r * 1.6, 0), 3.0, cc)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if venom_stacks > 0:
+		draw_circle(Vector2(0, -radius - 13.0), 2.0 + venom_stacks * 0.4, Color(0.7, 1.0, 0.2, 0.9))
+	if alarm_stacks > 0:
+		draw_arc(Vector2.ZERO, radius + 2.0, 0.0, TAU, 16, Color(1.0, 0.5, 0.1, 0.7), 1.0)
 	if hp < max_hp or selected:
 		var w = radius * 2.4
 		draw_rect(Rect2(-w / 2.0, -radius - 8.0, w, 3.0), Color(0, 0, 0, 0.6))
