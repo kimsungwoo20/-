@@ -19,6 +19,9 @@ const START_MAT = 100.0
 const START_WORKERS = 6
 const SUCCESSION_TIME = 60.0
 const AGGRO = 150.0
+const ROOT_DAMAGE_MULT = 0.4
+const TYRANT_AURA = 120.0
+const TYRANT_CD_MULT = 0.8
 
 # reach: 공격 사거리(양쪽 반지름 제외). 30 이하는 근접.
 # batch: 1회 생산 수. 불개미 T1 은 2기 한 조.
@@ -31,6 +34,18 @@ const UNITS = {
 		"hp": 75.0, "dmg": 4.0, "cd": 1.0, "reach": 4.0, "speed": 78.0, "radius": 6.5, "batch": 2},
 	"sprayer": {"name": "분사병", "food": 110, "mat": 30, "pop": 2.0, "time": 39.0, "tier": 2,
 		"hp": 55.0, "dmg": 10.0, "cd": 1.3, "reach": 115.0, "speed": 82.0, "radius": 7.0, "batch": 1},
+	# 폭군 대병: 주변 침병의 공격 속도를 올린다. (고유 진화 "폭군의 혈통" 요구 조건은 연구 단계에서 추가)
+	"tyrant": {"name": "폭군 대병", "food": 250, "mat": 150, "pop": 4.0, "time": 60.0, "tier": 3,
+		"hp": 420.0, "dmg": 22.0, "cd": 1.1, "reach": 6.0, "speed": 70.0, "radius": 11.0, "batch": 1},
+	# 방벽 개미: 거점화(root)하면 이동 불가, 받는 피해 60% 감소
+	"wall": {"name": "방벽 개미", "food": 100, "mat": 30, "pop": 2.0, "time": 36.0, "tier": 2,
+		"hp": 150.0, "dmg": 5.0, "cd": 1.0, "reach": 4.0, "speed": 70.0, "radius": 8.0, "batch": 1, "root": true},
+	# 공중 유닛. air: 지형 무시, 근접 지상 유닛에게 공격받지 않는다
+	"scout": {"name": "날개 정찰병", "food": 40, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
+		"hp": 35.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 140.0, "radius": 5.0, "batch": 1, "air": true},
+	"swarm": {"name": "혼인비행 떼", "food": 80, "mat": 70, "pop": 2.0, "time": 30.0, "tier": 2,
+		"hp": 30.0, "dmg": 5.0, "cd": 0.9, "reach": 12.0, "speed": 120.0, "radius": 5.0, "batch": 2, "air": true,
+		"hits_air": false},
 }
 
 # nest 의 mat/time 은 위성 둥지 기준이며 불개미 할인(-30%)이 반영된 값이다(공통 250M / 50초).
@@ -38,9 +53,11 @@ const BUILDINGS = {
 	"nest": {"name": "불둔덕", "mat": 175, "time": 35.0, "hp": 1500.0, "radius": 40.0,
 		"produces": ["worker"]},
 	"combat": {"name": "독침 부화굴", "mat": 150, "time": 30.0, "hp": 650.0, "radius": 30.0,
-		"produces": ["stinger", "sprayer"]},
+		"produces": ["stinger", "sprayer", "tyrant"]},
 	"defense": {"name": "병정 굴", "mat": 150, "time": 30.0, "hp": 750.0, "radius": 30.0,
-		"produces": ["soldier"]},
+		"produces": ["soldier", "wall"]},
+	"special": {"name": "날개 산실", "mat": 200, "time": 40.0, "hp": 550.0, "radius": 30.0,
+		"produces": ["scout", "swarm"], "min_tier": 2},
 	"lab": {"name": "독샘 방", "mat": 200, "time": 40.0, "hp": 550.0, "radius": 28.0,
 		"produces": []},
 }

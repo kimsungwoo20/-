@@ -9,6 +9,7 @@ var hp = 1.0
 var max_hp = 1.0
 var radius = 30.0
 var dead = false
+var air = false
 var selected = false
 var built = false
 var build_progress = 0.0
@@ -172,6 +173,10 @@ func _draw():
 			draw_rect(Rect2(-radius * 0.4, -radius * 0.4, radius * 0.8, radius * 0.8), Color(c.r, c.g, c.b, a))
 		"lab":
 			draw_circle(Vector2.ZERO, radius * 0.4, Color(0.8, 1.0, 0.3, a))
+		"special":
+			draw_circle(Vector2(0, -radius * 0.3), radius * 0.3, Color(1, 1, 1, 0.6 * a))
+			draw_circle(Vector2(0, radius * 0.3), radius * 0.3, Color(1, 1, 1, 0.6 * a))
+			draw_circle(Vector2.ZERO, radius * 0.2, Color(c.r, c.g, c.b, a))
 	var font = ThemeDB.fallback_font
 	draw_string(font, Vector2(-80, radius + 16.0), d["name"], HORIZONTAL_ALIGNMENT_CENTER, 160, 12, Color(1, 1, 1, 0.85))
 	var w = radius * 2.0

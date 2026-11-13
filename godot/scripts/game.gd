@@ -26,6 +26,7 @@ var elapsed = 0.0
 var game_over = false
 var winner = -1
 var autotest = false
+var sandbox = false      # 점검용: 인공지능 없음, 승패 판정 없음
 var report_t = 0.0
 
 var camera
@@ -42,6 +43,7 @@ var pan_drag = false
 
 func _ready():
 	autotest = OS.get_cmdline_user_args().has("--autotest")
+	sandbox = OS.get_cmdline_user_args().has("--sandbox")
 	world = Node2D.new()
 	add_child(world)
 	overlay = Node2D.new()
@@ -77,7 +79,7 @@ func _setup_players():
 		p.color = defs[i][1]
 		p.is_ai = (i != human_id) or autotest
 		players.append(p)
-		if p.is_ai:
+		if p.is_ai and not sandbox:
 			var ai = AIScript.new()
 			ai.setup(self, i)
 			ais.append(ai)
@@ -134,6 +136,8 @@ func spawn_unit(pid, kind, pos):
 	var u = UnitScript.new()
 	u.setup(self, pid, kind, pos)
 	u.z_index = 5
+	if u.air:
+		u.z_index = 8
 	world.add_child(u)
 	units.append(u)
 	return u
@@ -216,19 +220,25 @@ func query_units(pos, r):
 						out.append(u)
 	return out
 
-func find_enemy_unit(pos, pid, r):
+func tyrant_near(pos, pid):
+	for u in query_units(pos, Data.TYRANT_AURA):
+		if u.pid == pid and u.kind == "tyrant":
+			return true
+	return false
+
+func find_enemy_unit(pos, pid, r, hits_air = true):
 	var best = null
 	var bd = r
 	for u in query_units(pos, r):
-		if u.pid != pid:
+		if u.pid != pid and (hits_air or not u.air):
 			var dd = u.position.distance_to(pos)
 			if dd <= bd:
 				bd = dd
 				best = u
 	return best
 
-func find_enemy(pos, pid, r):
-	var u = find_enemy_unit(pos, pid, r)
+func find_enemy(pos, pid, r, hits_air = true):
+	var u = find_enemy_unit(pos, pid, r, hits_air)
 	if u != null:
 		return u
 	var best = null
@@ -334,6 +344,9 @@ func start_build(pid, kind, pos, builders):
 		if not has_built(pid, "combat") and not has_built(pid, "defense"):
 			_say(pid, "전투 또는 방어 생산 건물이 먼저 필요합니다")
 			return null
+	if main_tier(pid) < d.get("min_tier", 1):
+		_say(pid, "주 둥지 등급이 부족합니다")
+		return null
 	if not can_place(kind, pos):
 		_say(pid, "그 자리에는 지을 수 없습니다")
 		return null
@@ -502,18 +515,34 @@ func get_commands():
 			cmds.append({"text": "마지막 예약 취소", "tip": "전액 환불", "enabled": true, "call": cancel_last.bind(b)})
 		return cmds
 	var has_worker = false
+	var has_root = false
 	for u in sel_units():
 		if u.is_worker:
 			has_worker = true
+		if u.d.get("root", false):
+			has_root = true
 	if has_worker:
-		for k in ["nest", "combat", "defense", "lab"]:
+		for k in ["nest", "combat", "defense", "special", "lab"]:
 			var d2 = Data.BUILDINGS[k]
 			var nm = d2["name"]
 			if k == "nest":
 				nm += " (위성)"
 			cmds.append({"text": "%s\n재료 %d" % [nm, d2["mat"]], "tip": "지을 자리를 클릭",
-				"enabled": true, "call": _enter_build.bind(k)})
+				"enabled": main_tier(human_id) >= d2.get("min_tier", 1), "call": _enter_build.bind(k)})
+	elif has_root:
+		cmds.append({"text": "거점화 / 해제", "tip": "이동 불가, 받는 피해 60% 감소",
+			"enabled": true, "call": _toggle_root})
 	return cmds
+
+func _toggle_root():
+	# 하나라도 풀려 있으면 전부 거점화, 모두 거점화 상태면 전부 해제
+	var any_free = false
+	for u in sel_units():
+		if u.d.get("root", false) and not u.rooted:
+			any_free = true
+	for u in sel_units():
+		if u.d.get("root", false) and u.rooted != any_free:
+			u.toggle_root()
 
 func _enter_build(kind):
 	build_mode = kind
@@ -692,7 +721,7 @@ func _physics_process(delta):
 		if p.research.has("colony1"):
 			p.pop_cap += 10.0
 		p.pop_cap = min(p.pop_cap, Data.POP_MAX)
-		if p.alive and not has_nest[p.id]:
+		if p.alive and not has_nest[p.id] and not sandbox:
 			_eliminate(p)
 	for ai in ais:
 		ai.tick(delta)
@@ -719,6 +748,8 @@ func _eliminate(p):
 			remove_building(b)
 
 func _check_end():
+	if sandbox:
+		return
 	var alive = []
 	for p in players:
 		if p.alive:

@@ -12,6 +12,12 @@ var max_hp = 1.0
 var pop = 1.0
 var radius = 6.0
 var is_worker = false
+var air = false
+var can_fight = true
+var hits_air = false
+var rooted = false
+var buffed = false
+var aura_t = 0.0
 var dead = false
 var selected = false
 var facing = 0.0
@@ -41,6 +47,9 @@ func setup(g, p, k, pos):
 	radius = d["radius"]
 	pop = d["pop"] / float(d["batch"])
 	is_worker = (k == "worker")
+	air = d.get("air", false)
+	can_fight = d["dmg"] > 0.0
+	hits_air = d.get("hits_air", d["reach"] > 30.0)
 	position = pos
 	think = randf() * 0.3
 
@@ -51,7 +60,20 @@ func _leave():
 		node.release_slot(self)
 	in_slot = false
 
+func can_hit(t):
+	return hits_air or not t.air
+
+func toggle_root():
+	if not d.get("root", false):
+		return
+	_leave()
+	rooted = not rooted
+	target = null
+	state = IDLE
+
 func cmd_move(p):
+	if rooted:
+		return
 	_leave()
 	state = MOVE
 	dest = p
@@ -59,6 +81,8 @@ func cmd_move(p):
 	build_target = null
 
 func cmd_amove(p):
+	if rooted:
+		return
 	_leave()
 	state = AMOVE
 	dest = p
@@ -100,10 +124,16 @@ func _physics_process(delta):
 	if dead:
 		return
 	cd -= delta
+	if kind == "stinger":
+		aura_t -= delta
+		if aura_t <= 0.0:
+			aura_t = 0.5
+			buffed = game.tyrant_near(position, pid)
 	match state:
 		IDLE:
-			position += _separation() * delta
-			if not is_worker:
+			if not rooted:
+				position += _separation() * delta
+			if not is_worker and can_fight:
 				_think(delta, false)
 		MOVE:
 			if _go(dest, delta, 6.0):
@@ -133,7 +163,7 @@ func _think(delta, from_amove):
 	if think > 0.0:
 		return false
 	think = 0.3
-	var t = game.find_enemy(position, pid, Data.AGGRO)
+	var t = game.find_enemy(position, pid, Data.AGGRO, hits_air)
 	if t == null:
 		return false
 	target = t
@@ -142,7 +172,7 @@ func _think(delta, from_amove):
 	return true
 
 func _do_attack(delta):
-	if not _valid(target):
+	if not _valid(target) or not can_fight or not can_hit(target):
 		target = null
 		if resume_amove:
 			state = AMOVE
@@ -154,22 +184,29 @@ func _do_attack(delta):
 	var dist = position.distance_to(target.position)
 	if dist <= reach:
 		facing = (target.position - position).angle()
-		position += _separation() * delta
+		if not rooted:
+			position += _separation() * delta
 		if cd <= 0.0:
 			cd = d["cd"]
+			if buffed:
+				cd *= Data.TYRANT_CD_MULT
 			var dmg = d["dmg"]
 			if d["reach"] <= 30.0 and game.players[pid].research.has("jaw1"):
 				dmg *= 1.1
 			if d["reach"] > 30.0:
 				game.add_shot(position, target.position, Color(0.8, 1.0, 0.3))
 			target.take_damage(dmg, self)
+	elif rooted:
+		# 거점화 중에는 쫓아가지 않는다
+		target = null
+		state = IDLE
 	else:
 		_go(target.position, delta, reach - 2.0)
 		# 건물을 치러 가는 길에 적 유닛이 붙으면 그쪽을 먼저 상대한다
 		think -= delta
 		if think <= 0.0:
 			think = 0.5
-			var t = game.find_enemy_unit(position, pid, 60.0)
+			var t = game.find_enemy_unit(position, pid, 60.0, hits_air)
 			if t != null:
 				target = t
 
@@ -245,7 +282,7 @@ func _go(p, delta, stop):
 func _separation():
 	var push = Vector2.ZERO
 	for o in game.query_units(position, 18.0):
-		if o == self:
+		if o == self or o.air != air:
 			continue
 		var off = position - o.position
 		var dd = off.length()
@@ -266,13 +303,15 @@ func take_damage(amount, attacker):
 		return
 	if game.players[pid].research.has("shell1"):
 		amount *= 0.92
+	if rooted:
+		amount *= Data.ROOT_DAMAGE_MULT
 	hp -= amount
 	if hp <= 0.0:
 		dead = true
 		_leave()
 		game.remove_unit(self)
 		return
-	if not is_worker and state == IDLE and _valid(attacker):
+	if not is_worker and can_fight and state == IDLE and _valid(attacker) and can_hit(attacker):
 		target = attacker
 		resume_amove = false
 		state = ATTACK
@@ -283,8 +322,15 @@ func _draw():
 	var c = game.players[pid].color
 	if selected:
 		draw_arc(Vector2.ZERO, radius + 5.0, 0.0, TAU, 20, Color(0.3, 1.0, 0.3), 1.5)
-	draw_set_transform(Vector2.ZERO, facing, Vector2.ONE)
 	var r = radius
+	if air:
+		draw_circle(Vector2(4, 10), r * 0.8, Color(0, 0, 0, 0.25))
+	if rooted:
+		draw_rect(Rect2(-r - 3, -r - 3, r * 2 + 6, r * 2 + 6), Color(0.85, 0.7, 0.4), false, 2.0)
+	draw_set_transform(Vector2.ZERO, facing, Vector2.ONE)
+	if air:
+		draw_circle(Vector2(-r * 0.2, -r * 0.9), r * 0.7, Color(1, 1, 1, 0.45))
+		draw_circle(Vector2(-r * 0.2, r * 0.9), r * 0.7, Color(1, 1, 1, 0.45))
 	draw_circle(Vector2(-r * 0.9, 0), r * 0.75, c.darkened(0.3))
 	draw_circle(Vector2.ZERO, r * 0.5, c)
 	if kind == "soldier":

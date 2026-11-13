@@ -37,12 +37,13 @@ func tick(delta):
 		if u.pid == pid:
 			if u.is_worker:
 				workers.append(u)
-			else:
+			elif u.can_fight:
 				army.append(u)
 	var nests = []
 	var combats = []
 	var defenses = []
 	var lab = null
+	var specials = []
 	var unbuilt = []
 	for b in game.buildings:
 		if b.pid != pid:
@@ -59,6 +60,8 @@ func tick(delta):
 				defenses.append(b)
 			"lab":
 				lab = b
+			"special":
+				specials.append(b)
 
 	_assign_workers(workers)
 
@@ -100,6 +103,8 @@ func tick(delta):
 			game.start_upgrade(main)
 		elif n_combat < 2 and e > 380.0:
 			_build("combat", main.position, workers)
+		elif main.tier >= 2 and game.count_buildings(pid, "special") == 0 and e > 420.0:
+			_build("special", main.position, workers)
 		elif n_nest < 3 and e > 480.0:
 			_expand(main, workers)
 		elif n_combat < 3 and e > 600.0 and p.food > 400.0:
@@ -120,10 +125,15 @@ func tick(delta):
 	# 병력 생산
 	for b in combats:
 		if b.queue.size() < 2:
-			if main.tier >= 2 and p.mat >= 80.0 and randf() < 0.4:
+			if main.tier >= 3 and p.mat >= 200.0 and p.food >= 300.0 and randf() < 0.3:
+				game.enqueue_unit(b, "tyrant")
+			elif main.tier >= 2 and p.mat >= 80.0 and randf() < 0.4:
 				game.enqueue_unit(b, "sprayer")
 			elif p.food >= 50.0:
 				game.enqueue_unit(b, "stinger")
+	for b in specials:
+		if b.queue.is_empty() and p.mat >= 150.0 and p.food >= 150.0:
+			game.enqueue_unit(b, "swarm")
 	for b in defenses:
 		if b.queue.is_empty() and p.food >= 160.0:
 			game.enqueue_unit(b, "soldier")
