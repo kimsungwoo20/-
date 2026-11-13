@@ -51,6 +51,7 @@ func _ready():
 	camera = Camera2D.new()
 	add_child(camera)
 	camera.make_current()
+	camera.zoom = Vector2(1.25, 1.25)
 	_setup_players()
 	_setup_map()
 	hud = HudScript.new()
@@ -114,8 +115,14 @@ func _setup_map():
 		nest.rally_node = nearest_node(nest.position, "food", null)
 		for k in Data.START_WORKERS:
 			var u = spawn_unit(i, "worker", starts[i] + Vector2(60, 0).rotated(k * TAU / Data.START_WORKERS))
-			if not players[i].is_ai and nest.rally_node != null:
-				u.cmd_gather(nest.rally_node)
+			if not players[i].is_ai:
+				# 시작 일꾼 6기 중 4기는 식량, 2기는 재료로 보낸다
+				var res = "food"
+				if k >= 4:
+					res = "mat"
+				var n = nearest_node(nest.position, res, null)
+				if n != null:
+					u.cmd_gather(n)
 
 func _add_node(kind, pos):
 	var n = NodeScript.new()

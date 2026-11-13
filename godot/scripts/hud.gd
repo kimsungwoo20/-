@@ -42,6 +42,11 @@ func setup(g):
 	panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	panel.offset_top = -150
 	panel.offset_bottom = 0
+	var sb = StyleBoxFlat.new()
+	sb.bg_color = Color(0.13, 0.1, 0.08, 0.95)
+	sb.border_color = Color(0.4, 0.3, 0.2)
+	sb.border_width_top = 2
+	panel.add_theme_stylebox_override("panel", sb)
 	root.add_child(panel)
 
 	var mm = Minimap.new()

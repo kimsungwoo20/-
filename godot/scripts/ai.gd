@@ -106,6 +106,9 @@ func tick(delta):
 			_build("combat", main.position, workers)
 		elif main.tier < 3 and e > 700.0:
 			game.start_upgrade(main)
+		elif n_combat < 6 and p.food > 600.0:
+			# 식량이 남아돌면 생산 건물을 늘려 소비한다
+			_build("combat", main.position, workers)
 
 	# 연구
 	if lab != null and lab.queue.is_empty():
