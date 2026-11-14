@@ -14,6 +14,7 @@ var gather_mult = 1.0    # 어려움 난이도·인원 불균형 보정의 채�
 var faction = "fire"
 var war_cd = 0.0         # 전쟁 균류 재사용 대기
 var looted = 0.0         # 약탈로 얻은 자원 합계
+var spent = 0.0          # 쓴 자원 합계(밸런스 측정용)
 var food = Data.START_FOOD
 var mat = Data.START_MAT
 var pop_used = 0.0
@@ -27,6 +28,7 @@ func can_afford(f, m):
 func pay(f, m):
 	food -= f
 	mat -= m
+	spent += f + m
 
 func has(id):
 	return research.has(id)

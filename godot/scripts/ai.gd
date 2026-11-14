@@ -29,13 +29,13 @@ var raft_drop = null     # 뗏목 상륙 목표
 const PLANS = {
 	# 불개미: 빠른 확장과 물량. 뗏목단으로 상륙
 	"fire": {"t1": "stinger", "t2": "sprayer", "t3": "tyrant", "def": "soldier", "air": "swarm",
-		"branches": ["wave", "burn"], "expand_early": true, "raft": true,
+		"branches": ["wave", "burn"], "expand_early": true, "raft": true, "mat_share": 0.25,
 		"research": ["carry1", "jaw1", "shell1", "spawn1", "colony1", "multiqueen", "alarm", "jaw2", "raft_form",
 			"venom1", "shell2", "carry2", "nursery1", "colony2", "gland1", "size1", "tyrant_blood", "branch",
 			"jaw3", "shell3", "troph1", "legs1", "size2", "nursery2", "gland2", "troph2", "flight1", "spawn2", "gland3"]},
 	# 잎꾼개미: 정원으로 경제를 키우고, 공생균 살포병이 병력을 따라다니며 회복
 	"leaf": {"t1": "cutter", "t2": "major", "t3": "supermajor", "def": "minim", "air": "spore",
-		"support": ["medic"],
+		"support": ["medic"], "mat_share": 0.45,
 		"branches": ["big_garden", "war_fungus"],
 		"research": ["high_yield", "carry1", "jaw1", "shell1", "hitchhiker", "colony1", "spawn1", "jaw2",
 			"shear1", "shell2", "antibiotic", "carry2", "nursery1", "colony2", "size1", "supermajor_caste", "branch",
@@ -170,11 +170,14 @@ func tick(delta):
 	elif unbuilt.is_empty() and workers.size() > 0 and not migrating:
 		if n_combat == 0:
 			_build("combat", main.position, workers)
+		elif p.food > 700.0 and p.mat > 250.0 and n_combat < max_combat:
+			# 자원이 쌓였다: 다른 건설보다 먼저 생산 건물을 늘려 소비한다
+			_build("combat", main.position, workers)
 		elif not nomad and n_nest < 2 and e > (100.0 if plan.get("expand_early", false) else 150.0):
 			_expand(main, workers)
 		elif n_def == 0 and e > 200.0:
 			_build("defense", main.position, workers)
-		elif n_lab == 0 and e > (140.0 if nomad else 260.0):
+		elif n_lab == 0 and e > (140.0 if nomad else 180.0):
 			_build("lab", main.position, workers)
 		elif main.tier < 2 and e > 320.0:
 			game.start_upgrade(main)
@@ -199,7 +202,7 @@ func tick(delta):
 				id = branch_pick
 			var r = Data.RESEARCH[id]
 			if game.research_state(lab, id) == "ok":
-				if p.can_afford(r["food"], r["mat"] + 100):
+				if p.can_afford(r["food"], r["mat"] + 40):
 					game.enqueue_research(lab, id)
 				break
 
@@ -253,9 +256,10 @@ func _tend_garden(nests, workers, p):
 		if slots == 0:
 			continue
 		var want = min(slots, int(workers.size() / 3))
-		if (p.mat < 30.0 or p.food > 1500.0) and n.gardeners.size() > 0:
+		# 식량이 남으면 정원사를 줄이고, 모자랄 때만 늘린다(재료를 식량으로 바꾸는 데도 재료가 든다)
+		if (p.mat < 30.0 or p.food > 800.0) and n.gardeners.size() > 0:
 			n.release_gardener()
-		elif p.mat > 120.0 and p.food < 1000.0 and n.gardeners.size() < want:
+		elif p.mat > 120.0 and p.food < 500.0 and n.gardeners.size() < want:
 			var going = 0
 			for w in workers:
 				if w.state == UnitScript.GARDEN:
@@ -273,7 +277,8 @@ func _assign_workers(workers):
 			idle.append(w)
 		elif w.last_res == "mat" and (w.state == UnitScript.GATHER or w.state == UnitScript.RETURN):
 			n_mat += 1
-	var want_mat = int(ceil(workers.size() * 0.35))
+	# 재료 채집 비율: 잎꾼개미는 정원이 재료를 식량으로 바꾸므로 재료를 더 캔다
+	var want_mat = int(ceil(workers.size() * plan.get("mat_share", 0.35)))
 	for w in idle:
 		var res = "food"
 		if n_mat < want_mat:

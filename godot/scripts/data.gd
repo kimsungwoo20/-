@@ -87,7 +87,7 @@ const UNITS = {
 		"hp": 40.0, "dmg": 3.0, "cd": 1.0, "reach": 4.0, "speed": 75.0, "radius": 6.0, "batch": 1},
 	# ---- 불개미 ----
 	"stinger": {"name": "침병", "food": 50, "mat": 0, "pop": 1.0, "time": 12.5, "tier": 1,
-		"hp": 32.0, "dmg": 5.0, "cd": 0.8, "reach": 4.0, "speed": 100.0, "radius": 5.0, "batch": 2},
+		"hp": 36.0, "dmg": 5.0, "cd": 0.8, "reach": 4.0, "speed": 100.0, "radius": 5.0, "batch": 2},
 	"soldier": {"name": "병정개미", "food": 60, "mat": 0, "pop": 1.0, "time": 15.0, "tier": 1,
 		"hp": 75.0, "dmg": 4.0, "cd": 1.0, "reach": 4.0, "speed": 78.0, "radius": 6.5, "batch": 2},
 	"sprayer": {"name": "분사병", "food": 110, "mat": 30, "pop": 2.0, "time": 39.0, "tier": 2,
@@ -102,9 +102,9 @@ const UNITS = {
 		"amphibious": true, "needs": "raft_form"},
 	# ---- 잎꾼개미 ----
 	# 절단병: 평범하지만 공격·방어 연구 효과가 1.5배(upg)
-	"cutter": {"name": "절단병", "food": 60, "mat": 0, "pop": 2.0, "time": 15.0, "tier": 1,
-		"hp": 70.0, "dmg": 7.0, "cd": 1.0, "reach": 4.0, "speed": 85.0, "radius": 6.5, "batch": 1, "upg": 1.5},
-	"major": {"name": "대턱 병정", "food": 140, "mat": 50, "pop": 3.0, "time": 50.0, "tier": 2,
+	"cutter": {"name": "절단병", "food": 50, "mat": 0, "pop": 2.0, "time": 12.5, "tier": 1,
+		"hp": 75.0, "dmg": 7.0, "cd": 1.0, "reach": 4.0, "speed": 85.0, "radius": 6.5, "batch": 1, "upg": 1.5},
+	"major": {"name": "대턱 병정", "food": 120, "mat": 40, "pop": 3.0, "time": 45.0, "tier": 2,
 		"hp": 240.0, "dmg": 16.0, "cd": 1.2, "reach": 5.0, "speed": 72.0, "radius": 9.5, "batch": 1},
 	# 초대형 병정: 건물·거점화 유닛에 큰 피해, 긴 근접 사거리. 고유 진화 "초대형 계급" 필요
 	"supermajor": {"name": "초대형 병정", "food": 300, "mat": 200, "pop": 6.0, "time": 60.0, "tier": 3,
@@ -118,20 +118,20 @@ const UNITS = {
 		"hp": 30.0, "dmg": 3.0, "cd": 0.8, "reach": 4.0, "speed": 100.0, "radius": 4.5, "batch": 1,
 		"hits_air": true, "minim": true},
 	# 길잡이 소형개미: 은신 감지, 주변 아군 일꾼 이동 속도 증가
-	"pathfinder": {"name": "길잡이 소형개미", "food": 40, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
+	"pathfinder": {"name": "길잡이 소형개미", "food": 40, "mat": 20, "pop": 1.0, "time": 17.5, "tier": 2,
 		"hp": 35.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 110.0, "radius": 4.5, "batch": 1,
 		"sight": 300.0, "detect": 300.0},
 	# 공생균 살포병: 주변 아군 회복
-	"medic": {"name": "공생균 살포병", "food": 80, "mat": 40, "pop": 2.0, "time": 30.0, "tier": 2,
+	"medic": {"name": "공생균 살포병", "food": 80, "mat": 40, "pop": 2.0, "time": 35.0, "tier": 2,
 		"hp": 60.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 80.0, "radius": 6.5, "batch": 1},
 	# 포자 살포 날개개미: 느린 공중 폭격기. 포자 지대가 건물·거점화 유닛에 지속 피해. 공중 공격 불가
-	"spore": {"name": "포자 살포 날개개미", "food": 100, "mat": 100, "pop": 3.0, "time": 50.0, "tier": 2,
+	"spore": {"name": "포자 살포 날개개미", "food": 100, "mat": 100, "pop": 3.0, "time": 60.0, "tier": 2,
 		"hp": 90.0, "dmg": 4.0, "cd": 2.0, "reach": 60.0, "speed": 60.0, "radius": 8.0, "batch": 1,
 		"air": true, "hits_air": false, "spore": true},
 	# ---- 베짜기개미 ----
 	# 산성 분사병: 원거리, 작은 범위 피해(aoe)
 	"acid": {"name": "산성 분사병", "food": 70, "mat": 0, "pop": 2.0, "time": 17.5, "tier": 1,
-		"hp": 55.0, "dmg": 8.0, "cd": 1.2, "reach": 100.0, "speed": 82.0, "radius": 6.5, "batch": 1, "aoe": 22.0, "acid": true},
+		"hp": 50.0, "dmg": 7.5, "cd": 1.2, "reach": 100.0, "speed": 82.0, "radius": 6.5, "batch": 1, "aoe": 22.0, "acid": true},
 	# 사슬 견인병: 떨어진 적 1기를 자기 앞으로 끌어당긴다
 	"puller": {"name": "사슬 견인병", "food": 120, "mat": 40, "pop": 3.0, "time": 45.0, "tier": 2,
 		"hp": 180.0, "dmg": 10.0, "cd": 1.0, "reach": 5.0, "speed": 78.0, "radius": 9.0, "batch": 1, "pull": true},
@@ -146,23 +146,23 @@ const UNITS = {
 	"curtain": {"name": "장막 방직병", "food": 90, "mat": 30, "pop": 2.0, "time": 34.0, "tier": 2,
 		"hp": 110.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 70.0, "radius": 7.0, "batch": 1,
 		"root": true, "curtain": true},
-	"sentinel": {"name": "감시병", "food": 40, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
+	"sentinel": {"name": "감시병", "food": 40, "mat": 20, "pop": 1.0, "time": 17.5, "tier": 2,
 		"hp": 35.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 105.0, "radius": 4.5, "batch": 1,
 		"sight": 260.0, "detect": 260.0},
 	# 유충 운반공: 건물 수리, 끊어진 네트워크를 잇는 임시 고리
-	"carrier": {"name": "유충 운반공", "food": 80, "mat": 40, "pop": 2.0, "time": 30.0, "tier": 2,
+	"carrier": {"name": "유충 운반공", "food": 80, "mat": 40, "pop": 2.0, "time": 35.0, "tier": 2,
 		"hp": 70.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 75.0, "radius": 7.0, "batch": 1,
 		"repair": true, "territory": 150.0},
-	"airsentry": {"name": "날개 파수꾼", "food": 90, "mat": 80, "pop": 2.0, "time": 38.0, "tier": 2,
+	"airsentry": {"name": "날개 파수꾼", "food": 90, "mat": 80, "pop": 2.0, "time": 52.5, "tier": 2,
 		"hp": 70.0, "dmg": 9.0, "cd": 1.2, "reach": 95.0, "speed": 105.0, "radius": 7.0, "batch": 1,
 		"air": true, "acid": true},
 	# ---- 함정턱개미 ----
 	# snap: 턱 타격(충전되면 3배 피해 + 밀쳐내기)
-	"hunter": {"name": "격발병", "food": 100, "mat": 0, "pop": 2.0, "time": 25.0, "tier": 1,
-		"hp": 100.0, "dmg": 12.0, "cd": 1.0, "reach": 4.0, "speed": 90.0, "radius": 7.0, "batch": 1, "snap": true},
+	"hunter": {"name": "격발병", "food": 110, "mat": 0, "pop": 2.0, "time": 27.5, "tier": 1,
+		"hp": 85.0, "dmg": 12.0, "cd": 1.0, "reach": 4.0, "speed": 90.0, "radius": 7.0, "batch": 1, "snap": true},
 	# 도약 사냥꾼: 턱 타격 후 뒤로 크게 뛰어 이탈. 뛰어올라 공중도 공격
-	"leaper": {"name": "도약 사냥꾼", "food": 150, "mat": 50, "pop": 3.0, "time": 50.0, "tier": 2,
-		"hp": 150.0, "dmg": 16.0, "cd": 1.0, "reach": 5.0, "speed": 95.0, "radius": 8.0, "batch": 1,
+	"leaper": {"name": "도약 사냥꾼", "food": 150, "mat": 50, "pop": 3.0, "time": 56.0, "tier": 2,
+		"hp": 130.0, "dmg": 16.0, "cd": 1.0, "reach": 5.0, "speed": 95.0, "radius": 8.0, "batch": 1,
 		"snap": true, "leap": true, "hits_air": true},
 	# 대왕 포식자: 턱 타격이 대상 뒤로 직선 범위 피해. 고유 진화 "포식자의 왕" 필요
 	"king": {"name": "대왕 포식자", "food": 320, "mat": 200, "pop": 6.0, "time": 60.0, "tier": 3,
@@ -173,25 +173,25 @@ const UNITS = {
 		"hp": 110.0, "dmg": 10.0, "cd": 1.0, "reach": 4.0, "speed": 70.0, "radius": 7.0, "batch": 1,
 		"root": true, "ambush": true},
 	# 굴 수호자: 아군 건물 근처에서 턱 타격 충전이 빠르다
-	"guardian": {"name": "굴 수호자", "food": 180, "mat": 50, "pop": 4.0, "time": 55.0, "tier": 2,
+	"guardian": {"name": "굴 수호자", "food": 180, "mat": 50, "pop": 4.0, "time": 60.0, "tier": 2,
 		"hp": 320.0, "dmg": 18.0, "cd": 1.1, "reach": 5.0, "speed": 70.0, "radius": 10.0, "batch": 1,
 		"snap": true, "guard": true},
 	# 그림자 척후: 움직여도 은신, 은신 감지
-	"shade": {"name": "그림자 척후", "food": 50, "mat": 25, "pop": 1.0, "time": 19.0, "tier": 2,
+	"shade": {"name": "그림자 척후", "food": 50, "mat": 25, "pop": 1.0, "time": 22.0, "tier": 2,
 		"hp": 40.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 115.0, "radius": 4.5, "batch": 1,
 		"sight": 260.0, "detect": 250.0, "cloak": true},
 	# 유인병: 버튼으로 주변 적을 자신에게 끌어들인다
-	"lure": {"name": "유인병", "food": 80, "mat": 30, "pop": 2.0, "time": 32.0, "tier": 2,
+	"lure": {"name": "유인병", "food": 80, "mat": 30, "pop": 2.0, "time": 31.0, "tier": 2,
 		"hp": 140.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 85.0, "radius": 7.0, "batch": 1, "lure": true},
 	# 낙하 사냥꾼: 공중에서 급강하 턱 타격. 타격 후 착지해 잠시 지상 유닛이 된다
-	"diver": {"name": "낙하 사냥꾼", "food": 140, "mat": 100, "pop": 3.0, "time": 50.0, "tier": 2,
+	"diver": {"name": "낙하 사냥꾼", "food": 140, "mat": 100, "pop": 3.0, "time": 60.0, "tier": 2,
 		"hp": 110.0, "dmg": 14.0, "cd": 1.2, "reach": 6.0, "speed": 120.0, "radius": 7.0, "batch": 1,
 		"air": true, "hits_air": true, "snap": true, "dive": true},
 	# ---- 군대개미 ----
 	"raider": {"name": "약탈병", "food": 50, "mat": 0, "pop": 1.0, "time": 12.5, "tier": 1,
-		"hp": 45.0, "dmg": 6.0, "cd": 0.8, "reach": 4.0, "speed": 125.0, "radius": 5.5, "batch": 1},
-	"sickle": {"name": "낫턱 병정", "food": 120, "mat": 40, "pop": 3.0, "time": 45.0, "tier": 2,
-		"hp": 130.0, "dmg": 22.0, "cd": 1.0, "reach": 5.0, "speed": 95.0, "radius": 8.5, "batch": 1},
+		"hp": 55.0, "dmg": 7.0, "cd": 0.8, "reach": 4.0, "speed": 125.0, "radius": 5.5, "batch": 1},
+	"sickle": {"name": "낫턱 병정", "food": 100, "mat": 30, "pop": 3.0, "time": 36.0, "tier": 2,
+		"hp": 150.0, "dmg": 22.0, "cd": 1.0, "reach": 5.0, "speed": 95.0, "radius": 8.5, "batch": 1},
 	# 포식 대군: 주변 범위 피해, 처치할 때마다 회복. 고유 진화 "포식의 물결" 필요
 	"horde": {"name": "포식 대군", "food": 300, "mat": 200, "pop": 6.0, "time": 60.0, "tier": 3,
 		"hp": 700.0, "dmg": 20.0, "cd": 0.9, "reach": 8.0, "speed": 80.0, "radius": 15.0, "batch": 1,
@@ -203,29 +203,29 @@ const UNITS = {
 	"bridge": {"name": "다리 개미", "food": 90, "mat": 30, "pop": 2.0, "time": 34.0, "tier": 2,
 		"hp": 160.0, "dmg": 6.0, "cd": 1.0, "reach": 4.0, "speed": 75.0, "radius": 8.0, "batch": 1,
 		"root": true, "bridge": true},
-	"vanguard": {"name": "선발 정찰병", "food": 40, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
+	"vanguard": {"name": "선발 정찰병", "food": 40, "mat": 20, "pop": 1.0, "time": 17.5, "tier": 2,
 		"hp": 35.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 130.0, "radius": 4.5, "batch": 1,
 		"sight": 300.0, "detect": 280.0},
 	# 운반병: 이동식 반납 지점
-	"porter": {"name": "운반병", "food": 80, "mat": 40, "pop": 2.0, "time": 30.0, "tier": 2,
+	"porter": {"name": "운반병", "food": 80, "mat": 40, "pop": 2.0, "time": 35.0, "tier": 2,
 		"hp": 120.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 80.0, "radius": 9.0, "batch": 1, "depot": true},
 	# 날개 수개미: 가장 빠른 공중 유닛. 공중 유닛만 공격
-	"drone": {"name": "날개 수개미", "food": 80, "mat": 70, "pop": 2.0, "time": 34.0, "tier": 2,
+	"drone": {"name": "날개 수개미", "food": 80, "mat": 70, "pop": 2.0, "time": 46.0, "tier": 2,
 		"hp": 60.0, "dmg": 10.0, "cd": 0.9, "reach": 14.0, "speed": 150.0, "radius": 6.0, "batch": 1,
 		"air": true, "hits_air": true, "air_only": true, "sight": 300.0},
 	# ---- 불개미 ----
 	# 보모 개미: 근처에서 아군 침병·병정개미가 죽으면 가까운 생산 건물의 진행도를 앞당긴다
-	"nurse": {"name": "보모 개미", "food": 50, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
+	"nurse": {"name": "보모 개미", "food": 50, "mat": 20, "pop": 1.0, "time": 20.0, "tier": 2,
 		"hp": 40.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 90.0, "radius": 5.0, "batch": 1},
 	# 방벽 개미: 거점화(root)하면 이동 불가, 받는 피해 60% 감소
 	"wall": {"name": "방벽 개미", "food": 100, "mat": 30, "pop": 2.0, "time": 36.0, "tier": 2,
 		"hp": 150.0, "dmg": 5.0, "cd": 1.0, "reach": 4.0, "speed": 70.0, "radius": 8.0, "batch": 1, "root": true},
 	# 공중 유닛. air: 지형 무시, 근접 지상 유닛에게 공격받지 않는다
-	"scout": {"name": "날개 정찰병", "food": 40, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
+	"scout": {"name": "날개 정찰병", "food": 40, "mat": 20, "pop": 1.0, "time": 17.5, "tier": 2,
 		"hp": 35.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 140.0, "radius": 5.0, "batch": 1, "air": true,
 		"sight": 320.0, "detect": 320.0},
 	# 날개 정찰병은 은신 감지(detect)와 넓은 시야
-	"swarm": {"name": "혼인비행 떼", "food": 80, "mat": 70, "pop": 2.0, "time": 30.0, "tier": 2,
+	"swarm": {"name": "혼인비행 떼", "food": 80, "mat": 70, "pop": 2.0, "time": 46.0, "tier": 2,
 		"hp": 30.0, "dmg": 5.0, "cd": 0.9, "reach": 12.0, "speed": 120.0, "radius": 5.0, "batch": 2, "air": true,
 		"hits_air": false},
 }
@@ -311,7 +311,7 @@ const FACTIONS = {
 		"sat_nest_mult": 1.0,
 		"upkeep": UPKEEP_COMMON,
 		"mat_carry_bonus": 0.0,
-		"carry_bonus": 5.0,                # 단독 사냥꾼: 일꾼이 무엇이든 5 더 나른다
+		"carry_bonus": 3.0,                # 단독 사냥꾼: 일꾼이 무엇이든 3 더 나른다(밸런스: 5 → 3)
 		"worker_food": 75,                 # 일꾼이 비싸다
 		"worker_dmg": 6.0,                 # 약한 자체 전투력
 		"hidden_buildings": true,          # 본진 외 건물은 은폐(감지 범위 안에서만 보이고 공격받는다)
@@ -332,7 +332,7 @@ const FACTIONS = {
 		"garden": [0, 0, 0, 0],
 		"mobile": true,                    # 모든 건물이 야영 ↔ 행군 전환
 		"building_mult": 0.6,              # 살아있는 건축: 건물 재료 비용 -40%
-		"building_pop": 3.0,               # 대신 본진 외 건물 1동당 인구 3 점유
+		"building_pop": 2.0,               # 대신 본진 외 건물 1동당 인구 2 점유(밸런스: 3 → 2)
 		"loot": true,                      # 약탈: 적 일꾼·건물 처치 시 자원
 		"no_aphid": true,                  # 포식: 진딧물은 채집하지 못하고 도살만
 		"corpse_harvest": 0.6,             # 사체 채집 시간 배율
@@ -348,12 +348,12 @@ const UNPACK_TIME_WANDER = 3.0
 const PACK_TIME_STATARY = 20.0         # 정주기 산란
 const MARCH_SPEED = 35.0
 const MARCH_SPEED_GREAT = 55.0         # 대행군
-const MARCH_PRODUCTION = 0.5           # 행군 중 유닛 생산 속도
+const MARCH_PRODUCTION = 0.65          # 행군 중 유닛 생산 속도(밸런스: 50% → 65%)
 const MARCH_PRODUCTION_GREAT = 0.75
 const MARCH_TAKEN = 1.25               # 야영 중이 아닌 건물이 받는 피해
 const STATARY_AFTER = 60.0             # 정주기 산란: 야영이 이만큼 이어지면
 const STATARY_SPEED = 1.5              # 생산 속도 배율
-const LOOT_RATE = 0.2                  # 약탈: 대상 비용의 20%
+const LOOT_RATE = 0.25                 # 약탈: 대상 비용의 25%(밸런스: 20% → 25%)
 const LOOT_RATE_INSTINCT = 0.35        # 약탈 본능
 const LOOT_COMBAT_RATE = 0.1           # 약탈 본능: 전투 유닛 처치 시
 const ESCORT_RADIUS = 200.0
@@ -367,8 +367,8 @@ const HOOK_TIME = 2.0
 const HOOK_SLOW = 0.7
 
 # ---- 턱 타격 (함정턱개미) ----
-const SNAP_MULT = 3.0                  # 충전된 턱 타격 피해 배율
-const SNAP_CHARGE = 4.0                # 공격하지 않고 이만큼 지나면 턱 타격 충전
+const SNAP_MULT = 2.5                  # 충전된 턱 타격 피해 배율(밸런스: 3 → 2.5)
+const SNAP_CHARGE = 5.0                # 공격하지 않고 이만큼 지나면 턱 타격 충전(밸런스: 4 → 5)
 const SNAP_CHARGE_GUARD = 2.0          # 굴 수호자: 아군 건물 근처에서 충전 시간
 const GUARD_RADIUS = 200.0
 const SNAP_KNOCK = 40.0                # 밀쳐내기 거리

@@ -783,7 +783,8 @@ func weaver_checks(game):
 		v.max_hp = 9999.0
 		v.hp = 9999.0
 	var d1 = await hit_once(game, ac, v1)
-	check(abs(d1 - 8.0 * F.taken_mult()) < 0.01 and abs((9999.0 - v2.hp) - 4.0 * F.taken_mult()) < 0.01, "산성 분사병: 대상 8, 주변 적 절반 피해")
+	var acid_d = Data.UNITS["acid"]["dmg"]
+	check(abs(d1 - acid_d * F.taken_mult()) < 0.01 and abs((9999.0 - v2.hp) - acid_d * 0.5 * F.taken_mult()) < 0.01, "산성 분사병: 대상 %.1f, 주변 적 절반 피해" % acid_d)
 	W.research["acid_pool"] = true
 	await hit_once(game, ac, v1)
 	check(game.zones.size() > 0, "농축 개미산: 바닥에 산성 지대")
@@ -892,7 +893,8 @@ func trap_checks(game):
 
 	# 진영 규칙
 	check(T.unit_food("worker") == 75 and F.unit_food("worker") == 50, "함정턱개미 일꾼은 식량 75")
-	check(T.carry_amount("food") - F.carry_amount("food") == 5.0 - 2.0 * F.level("carry"), "함정턱개미 일꾼은 무엇이든 5 더 나른다")
+	var tb = Data.FACTIONS["trap"]["carry_bonus"]
+	check(T.carry_amount("food") - F.carry_amount("food") == tb - 2.0 * F.level("carry"), "함정턱개미 일꾼은 무엇이든 %d 더 나른다" % int(tb))
 	var tw = game.spawn_unit(1, "worker", base)
 	check(tw.d["dmg"] == 6.0 and game.spawn_unit(0, "worker", base + Vector2(0, 300)).d["dmg"] == 3.0, "함정턱개미 일꾼 공격력 6 (다른 진영 3)")
 	clear_units(game)
@@ -925,7 +927,7 @@ func trap_checks(game):
 	var h = game.spawn_unit(1, "hunter", base)
 	var v = dummy(game, 0, "soldier", base + Vector2(20, 0))
 	var d1 = await hit_once(game, h, v)
-	check(abs(d1 - 36.0 * fm) < 0.01, "충전된 첫 공격은 턱 타격 3배 (%.1f)" % d1)
+	check(abs(d1 - 12.0 * Data.SNAP_MULT * fm) < 0.01, "충전된 첫 공격은 턱 타격 %.1f배 (%.1f)" % [Data.SNAP_MULT, d1])
 	check(v.position.x - base.x > 20.0 + Data.SNAP_KNOCK * 0.8, "턱 타격은 적을 밀쳐낸다")
 	var d2 = await hit_once(game, h, v)
 	check(abs(d2 - 12.0 * fm) < 0.01, "바로 다음 공격은 보통 피해 (%.1f)" % d2)
@@ -1018,7 +1020,7 @@ func trap_checks(game):
 	check(hh.stealthed, "완전 매복: 멈춰 있는 전투 유닛 은신")
 	var av = dummy(game, 0, "soldier", base + Vector2(16, 0))
 	var ad = await hit_once(game, hh, av)
-	check(abs(ad - 12.0 * 3.0 * 1.5 * fm) < 0.01, "완전 매복: 은신 중 턱 타격 1.5배 (%.1f)" % ad)
+	check(abs(ad - 12.0 * Data.SNAP_MULT * 1.5 * fm) < 0.01, "완전 매복: 은신 중 턱 타격 1.5배 (%.1f)" % ad)
 	T.research.erase("full_ambush")
 	clear_units(game)
 
@@ -1050,7 +1052,7 @@ func trap_checks(game):
 	var dv = game.spawn_unit(1, "diver", base)
 	var dt = dummy(game, 0, "soldier", base + Vector2(18, 0))
 	var dd = await hit_once(game, dv, dt)
-	check(abs(dd - 42.0 * fm) < 0.01 and not dv.air, "낙하 사냥꾼: 급강하 턱 타격 후 착지 (%.1f)" % dd)
+	check(abs(dd - 14.0 * Data.SNAP_MULT * fm) < 0.01 and not dv.air, "낙하 사냥꾼: 급강하 턱 타격 후 착지 (%.1f)" % dd)
 	var mel = dummy(game, 0, "stinger", dv.position + Vector2(-14, 0))
 	check(mel.can_hit(dv), "착지한 낙하 사냥꾼은 근접 공격을 받는다")
 	dv.cmd_stop()
@@ -1117,7 +1119,8 @@ func army_checks(game):
 	check(X != null, "약탈대 대열 건설")
 	X.add_build(1000.0)
 	await wait(0.1)
-	check(abs(A.pop_used - pop0 - 3.0) < 0.01, "건물 1동이 인구 3 차지")
+	var bpop = Data.FACTIONS["army"]["building_pop"]
+	check(abs(A.pop_used - pop0 - bpop) < 0.01, "건물 1동이 인구 %d 차지" % int(bpop))
 	var cap = A.pop_cap
 	var filler = game.spawn_unit(1, "raider", Vector2(2900, 300))
 	filler.pop = cap - A.pop_used - 1.0
@@ -1235,12 +1238,13 @@ func army_checks(game):
 	var prey = game.spawn_unit(0, "worker", spot + Vector2(14, 0))
 	f0 = A.food
 	prey.take_damage(9999.0, rd)
-	check(abs(A.food - f0 - 10.0) < 0.01, "적 일꾼 처치: 식량 +10 (비용의 20%)")
+	check(abs(A.food - f0 - 50.0 * Data.LOOT_RATE) < 0.01, "적 일꾼 처치: 식량 +%.1f (비용의 %d%%)" % [50.0 * Data.LOOT_RATE, int(Data.LOOT_RATE * 100)])
 	var loot_b = game.spawn_building(0, "combat", spot + Vector2(0, 200), true, false)
 	f0 = A.food
 	var m0 = A.mat
 	loot_b.take_damage(99999.0, rd)
-	check(abs(A.food - f0 - 30.0) < 0.01 and abs(A.mat - m0 - 30.0) < 0.01, "적 건물 파괴: 식량 +30, 재료 +30")
+	var lb = 150.0 * Data.LOOT_RATE
+	check(abs(A.food - f0 - lb) < 0.01 and abs(A.mat - m0 - lb) < 0.01, "적 건물 파괴: 식량 +%.1f, 재료 +%.1f" % [lb, lb])
 	var soldier = game.spawn_unit(0, "soldier", spot + Vector2(14, 0))
 	f0 = A.food
 	soldier.take_damage(9999.0, rd)

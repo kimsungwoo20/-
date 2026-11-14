@@ -1700,19 +1700,22 @@ func _report():
 			continue
 		var nu = 0
 		var nw = 0
+		var army = 0.0
 		for u in units:
 			if u.pid == p.id:
 				nu += 1
 				if u.is_worker:
 					nw += 1
+				elif u.can_fight:
+					army += (u.d["food"] + u.d["mat"]) / float(u.d["batch"])
 		var nb = 0
 		for b in buildings:
 			if b.pid == p.id:
 				nb += 1
 		if not p.active:
 			continue
-		print("t=%d p%d(%s, 팀 %d, %s) food=%d mat=%d pop=%.1f/%d units=%d workers=%d buildings=%d research=%s" % [
-			int(elapsed), p.id, p.faction, p.team, p.diff, int(p.food), int(p.mat), p.pop_used, int(p.pop_cap), nu, nw, nb, str(p.research.keys())])
+		print("t=%d p%d(%s, 팀 %d, %s) food=%d mat=%d pop=%.1f/%d units=%d workers=%d army=%d spent=%d buildings=%d research=%s" % [
+			int(elapsed), p.id, p.faction, p.team, p.diff, int(p.food), int(p.mat), p.pop_used, int(p.pop_cap), nu, nw, int(army), int(p.spent), nb, str(p.research.keys())])
 
 func add_shot(a, b, c):
 	shots.append([a, b, 0.12, c])
