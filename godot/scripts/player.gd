@@ -7,6 +7,8 @@ var color = Color.WHITE
 var is_ai = false
 var alive = true
 var neutral = false     # 중립 생물 전용 가상 플레이어
+var faction = "fire"
+var war_cd = 0.0         # 전쟁 균류 재사용 대기
 var food = Data.START_FOOD
 var mat = Data.START_MAT
 var pop_used = 0.0
@@ -39,7 +41,10 @@ func batch(kind):
 	return b
 
 func upkeep_mult():
-	for row in Data.UPKEEP:
+	var table = Data.UPKEEP_COMMON
+	if Data.FACTIONS.has(faction):
+		table = Data.FACTIONS[faction]["upkeep"]
+	for row in table:
 		if pop_used <= row[0]:
 			var penalty = 1.0 - row[1]
 			penalty *= Data.TROPH_PENALTY[level("troph")]
@@ -49,14 +54,15 @@ func upkeep_mult():
 	return 1.0
 
 # 연구 효과 배율
-func melee_mult():
-	return 1.0 + 0.1 * level("jaw")
+# upg: 연구 효과 배율(잎꾼개미 절단병은 1.5)
+func melee_mult(upg = 1.0):
+	return 1.0 + 0.1 * level("jaw") * upg
 
-func ranged_mult():
-	return 1.0 + 0.1 * level("gland")
+func ranged_mult(upg = 1.0):
+	return 1.0 + 0.1 * level("gland") * upg
 
-func taken_mult():
-	return 1.0 - 0.08 * level("shell")
+func taken_mult(upg = 1.0):
+	return 1.0 - 0.08 * level("shell") * upg
 
 func hp_mult(air):
 	var m = 1.0 + 0.1 * level("size")
@@ -69,8 +75,14 @@ func speed_mult(air):
 		return 1.15 if research.has("flight1") else 1.0
 	return 1.1 if research.has("legs1") else 1.0
 
-func carry_amount():
-	return Data.CARRY + 2.0 * level("carry")
+func carry_amount(res = "food"):
+	var n = Data.CARRY + 2.0 * level("carry")
+	if res == "mat" and Data.FACTIONS.has(faction):
+		n += Data.FACTIONS[faction]["mat_carry_bonus"]
+	return n
+
+func garden_ratio():
+	return Data.GARDEN_RATIO_HIGH if research.has("high_yield") else Data.GARDEN_RATIO
 
 func venom_cap():
 	if not research.has("venom1"):

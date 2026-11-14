@@ -25,12 +25,14 @@ var venom_stacks = 0
 var venom_t = 0.0
 var seen = false        # 사람 플레이어가 한 번이라도 본 적 있는 적 건물만 보인다
 var stealthed = false
+var gardeners = []      # 균류 정원 안에서 일하는 일꾼(잎꾼개미)
+var garden_buf = 0.0
 
 func setup(g, p, k, pos, finished, main):
 	game = g
 	pid = p
 	kind = k
-	d = Data.BUILDINGS[k]
+	d = Data.faction_building(g.players[p].faction, k)
 	max_hp = d["hp"]
 	radius = d["radius"]
 	position = pos
@@ -42,6 +44,57 @@ func setup(g, p, k, pos, finished, main):
 	else:
 		hp = max_hp * 0.1
 	rally_pos = pos + (Data.MAP_SIZE / 2.0 - pos).normalized() * (radius + 40.0)
+
+func garden_slots():
+	var f = game.players[pid].faction
+	var g = Data.FACTIONS[f]["garden"]
+	if kind != "nest" or not built or g[0] == 0:
+		return 0
+	var n = g[tier - 1] if is_main else g[3]
+	if game.players[pid].has("big_garden"):
+		n = int(round(n * Data.BIG_GARDEN_MULT))
+	return n
+
+func garden_efficiency():
+	if hp < max_hp * 0.5 and not game.players[pid].has("antibiotic"):
+		return Data.GARDEN_DAMAGED_MULT
+	return 1.0
+
+func add_gardener(u):
+	if gardeners.size() >= garden_slots():
+		return false
+	u._leave()
+	gardeners.append(u)
+	u.carried = true
+	u.visible = false
+	u.selected = false
+	u.state = u.IDLE
+	u.node = null
+	u.carry = 0.0
+	return true
+
+func release_gardener():
+	gardeners = gardeners.filter(func(x): return is_instance_valid(x) and not x.dead)
+	if gardeners.is_empty():
+		return null
+	var u = gardeners.pop_back()
+	u.carried = false
+	u.visible = true
+	u.position = game.terrain.nearest_open(position + Vector2(radius + 10.0, 0).rotated(randf() * TAU), "ground")
+	u.state = u.IDLE
+	return u
+
+# 정원사 수만큼 재료를 식량으로 바꾼다. 재료가 모자라면 그만큼만 바꾼다
+func _tick_garden(delta):
+	if gardeners.is_empty():
+		return
+	var p = game.players[pid]
+	var want = Data.GARDEN_MAT_PER_SEC * gardeners.size() * garden_efficiency() * delta
+	var used = min(want, p.mat)
+	if used <= 0.0:
+		return
+	p.mat -= used
+	p.food += used * p.garden_ratio() * p.upkeep_mult()
 
 func sight():
 	return Data.SIGHT_NEST if kind == "nest" else Data.SIGHT_BUILDING
@@ -85,6 +138,7 @@ func _physics_process(delta):
 	var p = game.players[pid]
 	if kind == "nest":
 		_defend(delta)
+		_tick_garden(delta)
 	if upgrade_t >= 0.0:
 		upgrade_t += delta
 		if upgrade_t >= Data.NEST_UPGRADE[tier + 1]["time"]:
@@ -170,6 +224,13 @@ func take_damage(amount, _attacker):
 	game.notify_attacked(self)
 	if hp <= 0.0:
 		dead = true
+		# 정원 안의 일꾼은 둥지와 함께 죽는다
+		for u in gardeners:
+			if is_instance_valid(u):
+				u.carried = false
+				u.dead = true
+				game.remove_unit(u)
+		gardeners.clear()
 		game.remove_building(self)
 
 func refund_queue():
@@ -197,6 +258,10 @@ func _draw():
 			if is_main:
 				for i in tier:
 					draw_circle(Vector2(-10 + i * 10, -radius - 8.0), 3.5, Color(1.0, 0.9, 0.3))
+			var gs = garden_slots()
+			for i in gs:
+				var col = Color(0.85, 0.9, 0.7, a) if i < gardeners.size() else Color(0.3, 0.35, 0.25, a)
+				draw_circle(Vector2(radius * 0.62, 0).rotated(i * TAU / gs), 3.0, col)
 		"combat":
 			for i in 3:
 				draw_circle(Vector2(radius * 0.4, 0).rotated(i * TAU / 3.0), radius * 0.22, Color(c.r, c.g, c.b, a))

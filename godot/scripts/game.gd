@@ -44,6 +44,7 @@ var camps = []           # {pos, kinds, units, respawn}
 var drop_t = 0.0
 var detectors = {}       # pid -> [[위치, 감지 반경], ...]
 var drop_rng = RandomNumberGenerator.new()
+var spore_zones = []     # [위치, 남은 시간, 주인 pid]
 
 var build_mode = ""
 var lab_tab = "body"
@@ -94,13 +95,36 @@ func _ready():
 
 # ---------- 초기 배치 ----------
 
+func _pick_factions():
+	var f = ["fire", "leaf"]
+	var args = OS.get_cmdline_user_args()
+	for a in args:
+		if a.begins_with("--p0="):
+			f[0] = a.substr(5)
+		elif a.begins_with("--p1="):
+			f[1] = a.substr(5)
+	if OS.has_feature("web"):
+		var q = str(JavaScriptBridge.eval("window.location.search", true))
+		for part in q.trim_prefix("?").split("&"):
+			var kv = part.split("=")
+			if kv.size() == 2 and kv[0] == "me":
+				f[human_id] = kv[1]
+			elif kv.size() == 2 and kv[0] == "ai":
+				f[1 - human_id] = kv[1]
+	for i in 2:
+		if not Data.FACTIONS.has(f[i]):
+			f[i] = "fire"
+	return f
+
 func _setup_players():
 	var defs = [["플레이어", Color(0.9, 0.25, 0.15)], ["인공지능", Color(0.25, 0.5, 0.95)]]
+	var fs = _pick_factions()
 	for i in defs.size():
 		var p = PlayerScript.new()
 		p.id = i
 		p.label = defs[i][0]
 		p.color = defs[i][1]
+		p.faction = fs[i]
 		p.is_ai = (i != human_id) or autotest
 		players.append(p)
 		if p.is_ai and not sandbox:
@@ -470,6 +494,9 @@ func deposit(pid, res, amount):
 	else:
 		p.mat += amount
 
+func bdata(pid, kind):
+	return Data.faction_building(players[pid].faction, kind)
+
 func can_place(kind, pos):
 	var r = Data.BUILDINGS[kind]["radius"]
 	if pos.x < r + 20 or pos.y < r + 20 or pos.x > Data.MAP_SIZE.x - r - 20 or pos.y > Data.MAP_SIZE.y - r - 20:
@@ -490,7 +517,7 @@ func _say(pid, text):
 
 func start_build(pid, kind, pos, builders):
 	var p = players[pid]
-	var d = Data.BUILDINGS[kind]
+	var d = bdata(pid, kind)
 	if kind == "lab":
 		if count_buildings(pid, "lab") > 0:
 			_say(pid, "연구소는 하나만 지을 수 있습니다")
@@ -566,6 +593,8 @@ func _queued(b, id):
 func research_state(b, id):
 	var p = players[b.pid]
 	var r = Data.RESEARCH[id]
+	if r.get("faction", "") != "" and r["faction"] != p.faction:
+		return "faction"
 	if p.has(id):
 		return "done"
 	if _queued(b, id):
@@ -590,6 +619,8 @@ func research_reason(st, id):
 			return "이미 예약한 연구입니다"
 		"taken":
 			return "다른 분기 진화를 이미 선택했습니다"
+		"faction":
+			return "다른 진영의 연구입니다"
 		"tier":
 			return "주 둥지 %s 등급이 필요합니다" % ["I", "II", "III"][r["tier"] - 1]
 		"req":
@@ -737,6 +768,18 @@ func get_commands():
 				ok = false
 				tip = "%s 연구 필요\n" % Data.RESEARCH[d["needs"]]["name"] + tip
 			cmds.append({"text": txt, "tip": tip, "enabled": ok, "call": enqueue_unit.bind(b, id)})
+		if b.garden_slots() > 0:
+			cmds.append({"text": "정원사 추가\n%d / %d" % [b.gardeners.size(), b.garden_slots()],
+				"tip": "가장 가까운 일꾼을 균류 정원에 넣는다. 정원사 1기가 분당 재료 45 를 식량 %d 으로 바꾼다" % int(45 * p.garden_ratio()),
+				"enabled": b.gardeners.size() < b.garden_slots(), "call": _add_gardener.bind(b)})
+			cmds.append({"text": "정원사 빼기", "tip": "정원사 1기를 밖으로 내보낸다", "enabled": b.gardeners.size() > 0,
+				"call": func(): b.release_gardener(); sel_version += 1})
+		if b.kind == "nest" and b.is_main and p.has("war_fungus"):
+			var txt2 = "포자 갑옷\n식량 %d" % Data.WAR_FUNGUS_FOOD
+			if p.war_cd > 0.0:
+				txt2 = "포자 갑옷\n%d초" % int(ceil(p.war_cd))
+			cmds.append({"text": txt2, "tip": "전 병력이 피해 %d 을 흡수하는 갑옷을 %d초 동안 두른다" % [int(Data.WAR_FUNGUS_SHIELD), int(Data.WAR_FUNGUS_TIME)],
+				"enabled": p.war_cd <= 0.0, "call": use_war_fungus.bind(b.pid)})
 		if b.kind == "nest" and b.is_main and b.tier < 3 and b.upgrade_t < 0.0:
 			var up = Data.NEST_UPGRADE[b.tier + 1]
 			cmds.append({"text": "둥지 등급 상승\n재료 %d" % up["mat"], "tip": "상위 유닛과 인구 한도 해금",
@@ -755,7 +798,7 @@ func get_commands():
 				if r["cat"] != lab_tab or shown.has(r["line"]):
 					continue
 				var st = research_state(b, id)
-				if st == "done" or st == "queued":
+				if st == "done" or st == "queued" or st == "faction":
 					continue
 				# 단계가 있는 연구는 다음 단계 하나만 보여 준다
 				shown[r["line"]] = true
@@ -779,7 +822,7 @@ func get_commands():
 			has_root = true
 	if has_worker:
 		for k in ["nest", "combat", "defense", "special", "lab"]:
-			var d2 = Data.BUILDINGS[k]
+			var d2 = bdata(human_id, k)
 			var nm = d2["name"]
 			if k == "nest":
 				nm += " (위성)"
@@ -801,6 +844,64 @@ func _unload():
 		if u.cargo.size() > 0 and not u.unload():
 			msg("땅 가까이에서만 내릴 수 있습니다")
 	sel_version += 1
+
+func _add_gardener(b):
+	var best = null
+	for u in units:
+		if u.pid == b.pid and u.is_worker and not u.carried and u.state != UnitScript.BUILD and u.state != UnitScript.GARDEN:
+			if best == null or u.position.distance_to(b.position) < best.position.distance_to(b.position):
+				best = u
+	if best == null:
+		msg("내보낼 일꾼이 없습니다")
+		return
+	best.cmd_garden(b)
+
+func use_war_fungus(pid):
+	var p = players[pid]
+	if not p.has("war_fungus") or p.war_cd > 0.0:
+		return false
+	if not p.can_afford(Data.WAR_FUNGUS_FOOD, 0):
+		_say(pid, "식량이 부족합니다")
+		return false
+	p.pay(Data.WAR_FUNGUS_FOOD, 0)
+	p.war_cd = Data.WAR_FUNGUS_COOLDOWN
+	for u in units:
+		if u.pid == pid and not u.is_worker and u.can_fight:
+			u.shield = Data.WAR_FUNGUS_SHIELD
+			u.shield_t = Data.WAR_FUNGUS_TIME
+	sel_version += 1
+	return true
+
+# 공생균 살포병: 주변 아군 유닛(항생 공생균이면 건물도) 회복
+func medic_pulse(m, dt):
+	for u in query_units(m.position, Data.MEDIC_RADIUS):
+		if u.pid == m.pid and u.hp < u.max_hp:
+			u.hp = min(u.max_hp, u.hp + Data.MEDIC_HEAL * dt)
+	if players[m.pid].has("antibiotic"):
+		for b in buildings:
+			if b.pid == m.pid and b.built and b.hp < b.max_hp and b.position.distance_to(m.position) <= Data.MEDIC_RADIUS + b.radius:
+				b.hp = min(b.max_hp, b.hp + Data.MEDIC_HEAL * dt)
+
+func pathfinder_near(pos, pid):
+	for u in query_units(pos, Data.PATHFINDER_RADIUS):
+		if u.pid == pid and u.kind == "pathfinder":
+			return true
+	return false
+
+# 포자 지대: 적의 건물과 거점화 유닛에 지속 피해
+func add_spore_zone(pos, pid):
+	spore_zones.append([pos, Data.SPORE_ZONE_TIME, pid])
+
+func _tick_spores(delta):
+	for z in spore_zones:
+		z[1] -= delta
+		for b in buildings:
+			if b.pid != z[2] and b.pid != Data.NEUTRAL_ID and not b.dead and b.position.distance_to(z[0]) <= Data.SPORE_ZONE_RADIUS + b.radius:
+				b.take_damage(Data.SPORE_ZONE_DPS * delta, null)
+		for u in query_units(z[0], Data.SPORE_ZONE_RADIUS):
+			if u.pid != z[2] and u.rooted:
+				u.take_damage(Data.SPORE_ZONE_DPS * delta, null)
+	spore_zones = spore_zones.filter(func(z): return z[1] > 0.0)
 
 func _set_lab_tab(tab):
 	lab_tab = tab
@@ -931,6 +1032,10 @@ func _right_click(wp):
 		for u in us:
 			if u != e:
 				u.cmd_board(e)
+	elif e != null and e is BuildingScript and e.pid == human_id and e.built and e.garden_slots() > 0 and us.any(func(x): return x.is_worker):
+		for u in us:
+			if u.is_worker:
+				u.cmd_garden(e)
 	elif e != null and e is BuildingScript and e.pid == human_id and not e.built:
 		for u in us:
 			if u.is_worker:
@@ -1020,6 +1125,10 @@ func _physics_process(delta):
 		if p.alive and not p.neutral and not has_nest[p.id] and not sandbox:
 			_eliminate(p)
 	_tick_map(delta)
+	_tick_spores(delta)
+	for p in players:
+		if p.war_cd > 0.0:
+			p.war_cd -= delta
 	for ai in ais:
 		ai.tick(delta)
 	_check_end()
@@ -1082,8 +1191,8 @@ func _report():
 		for b in buildings:
 			if b.pid == p.id:
 				nb += 1
-		print("t=%d p%d food=%d mat=%d pop=%.1f/%d units=%d workers=%d buildings=%d research=%s" % [
-			int(elapsed), p.id, int(p.food), int(p.mat), p.pop_used, int(p.pop_cap), nu, nw, nb, str(p.research.keys())])
+		print("t=%d p%d(%s) food=%d mat=%d pop=%.1f/%d units=%d workers=%d buildings=%d research=%s" % [
+			int(elapsed), p.id, p.faction, int(p.food), int(p.mat), p.pop_used, int(p.pop_cap), nu, nw, nb, str(p.research.keys())])
 
 func add_shot(a, b, c):
 	shots.append([a, b, 0.12, c])
@@ -1116,6 +1225,9 @@ func _draw():
 		draw_arc(e, 44.0, 0.0, TAU, 32, Color(1, 1, 1, 0.08), 2.0)
 
 func _draw_overlay():
+	for z in spore_zones:
+		if fog.is_visible_at(z[0]):
+			overlay.draw_circle(z[0], Data.SPORE_ZONE_RADIUS, Color(0.7, 0.85, 0.4, 0.25 * clamp(z[1], 0.0, 1.0)))
 	for s in shots:
 		if fog.is_visible_at(s[0]) or fog.is_visible_at(s[1]):
 			overlay.draw_line(s[0], s[1], s[3], 2.0)

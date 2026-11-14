@@ -178,7 +178,7 @@ func _fmt(v):
 
 func _info():
 	if game.build_mode != "":
-		return "%s 건설: 지을 자리를 왼쪽 클릭 (오른쪽 클릭으로 취소)" % Data.BUILDINGS[game.build_mode]["name"]
+		return "%s 건설: 지을 자리를 왼쪽 클릭 (오른쪽 클릭으로 취소)" % game.bdata(game.human_id, game.build_mode)["name"]
 	if game.amove_armed:
 		return "공격 이동: 목표 지점을 왼쪽 클릭"
 	var b = game.sel_building()

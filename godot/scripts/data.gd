@@ -1,6 +1,6 @@
 extends RefCounted
 # 공통 규칙 수치. docs/system-design.md 의 [권장] 초기값을 그대로 옮긴 것이다.
-# 현재는 불개미 한 진영만 구현되어 있어 불개미 고유 수정치가 이미 반영된 값이 섞여 있다(주석 표시).
+# 진영별로 다른 값은 FACTIONS 와, 유닛·연구의 "faction" 항목에 있다.
 
 const MAP_SIZE = Vector2(3200, 2000)
 const POP_MAX = 200.0
@@ -10,8 +10,6 @@ const NEST_UPGRADE = {
 	2: {"mat": 200, "time": 40.0},
 	3: {"mat": 400, "time": 60.0},
 }
-# 유지비: [인구 상한, 식량 수입 배율]. 불개미 고유값(공통은 0.85 / 0.70).
-const UPKEEP = [[60.0, 1.0], [120.0, 0.8], [99999.0, 0.6]]
 const QUEUE_MAX = 5
 const CARRY = 10.0
 const START_FOOD = 200.0
@@ -72,8 +70,10 @@ const BOARD_REACH = 26.0
 # reach: 공격 사거리(양쪽 반지름 제외). 30 이하는 근접.
 # batch: 1회 생산 수. 불개미 T1 은 2기 한 조.
 const UNITS = {
+	# ---- 공통 ----
 	"worker": {"name": "일꾼", "food": 50, "mat": 0, "pop": 1.0, "time": 12.0, "tier": 1,
 		"hp": 40.0, "dmg": 3.0, "cd": 1.0, "reach": 4.0, "speed": 75.0, "radius": 6.0, "batch": 1},
+	# ---- 불개미 ----
 	"stinger": {"name": "침병", "food": 50, "mat": 0, "pop": 1.0, "time": 12.5, "tier": 1,
 		"hp": 32.0, "dmg": 5.0, "cd": 0.8, "reach": 4.0, "speed": 100.0, "radius": 5.0, "batch": 2},
 	"soldier": {"name": "병정개미", "food": 60, "mat": 0, "pop": 1.0, "time": 15.0, "tier": 1,
@@ -88,6 +88,35 @@ const UNITS = {
 	"raft": {"name": "뗏목단", "food": 100, "mat": 50, "pop": 3.0, "time": 44.0, "tier": 2,
 		"hp": 220.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 65.0, "radius": 13.0, "batch": 1,
 		"amphibious": true, "needs": "raft_form"},
+	# ---- 잎꾼개미 ----
+	# 절단병: 평범하지만 공격·방어 연구 효과가 1.5배(upg)
+	"cutter": {"name": "절단병", "food": 60, "mat": 0, "pop": 2.0, "time": 15.0, "tier": 1,
+		"hp": 70.0, "dmg": 7.0, "cd": 1.0, "reach": 4.0, "speed": 85.0, "radius": 6.5, "batch": 1, "upg": 1.5},
+	"major": {"name": "대턱 병정", "food": 140, "mat": 50, "pop": 3.0, "time": 50.0, "tier": 2,
+		"hp": 240.0, "dmg": 16.0, "cd": 1.2, "reach": 5.0, "speed": 72.0, "radius": 9.5, "batch": 1},
+	# 초대형 병정: 건물·거점화 유닛에 큰 피해, 긴 근접 사거리. 고유 진화 "초대형 계급" 필요
+	"supermajor": {"name": "초대형 병정", "food": 300, "mat": 200, "pop": 6.0, "time": 60.0, "tier": 3,
+		"hp": 650.0, "dmg": 26.0, "cd": 1.5, "reach": 20.0, "speed": 58.0, "radius": 14.0, "batch": 1,
+		"siege": true, "needs": "supermajor_caste"},
+	# 문지기: 거점화하면 통로를 막는다
+	"gate": {"name": "문지기", "food": 70, "mat": 0, "pop": 2.0, "time": 17.5, "tier": 1,
+		"hp": 130.0, "dmg": 4.0, "cd": 1.0, "reach": 4.0, "speed": 65.0, "radius": 8.0, "batch": 1, "root": true},
+	# 호위 소형개미: 뛰어올라 공중 유닛도 문다. 빠른 적·공중 적에게 추가 피해
+	"minim": {"name": "호위 소형개미", "food": 40, "mat": 0, "pop": 1.0, "time": 10.0, "tier": 1,
+		"hp": 30.0, "dmg": 3.0, "cd": 0.8, "reach": 4.0, "speed": 100.0, "radius": 4.5, "batch": 1,
+		"hits_air": true, "minim": true},
+	# 길잡이 소형개미: 은신 감지, 주변 아군 일꾼 이동 속도 증가
+	"pathfinder": {"name": "길잡이 소형개미", "food": 40, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
+		"hp": 35.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 110.0, "radius": 4.5, "batch": 1,
+		"sight": 300.0, "detect": 300.0},
+	# 공생균 살포병: 주변 아군 회복
+	"medic": {"name": "공생균 살포병", "food": 80, "mat": 40, "pop": 2.0, "time": 30.0, "tier": 2,
+		"hp": 60.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 80.0, "radius": 6.5, "batch": 1},
+	# 포자 살포 날개개미: 느린 공중 폭격기. 포자 지대가 건물·거점화 유닛에 지속 피해. 공중 공격 불가
+	"spore": {"name": "포자 살포 날개개미", "food": 100, "mat": 100, "pop": 3.0, "time": 50.0, "tier": 2,
+		"hp": 90.0, "dmg": 4.0, "cd": 2.0, "reach": 60.0, "speed": 60.0, "radius": 8.0, "batch": 1,
+		"air": true, "hits_air": false, "spore": true},
+	# ---- 불개미 ----
 	# 보모 개미: 근처에서 아군 침병·병정개미가 죽으면 가까운 생산 건물의 진행도를 앞당긴다
 	"nurse": {"name": "보모 개미", "food": 50, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
 		"hp": 40.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 90.0, "radius": 5.0, "batch": 1},
@@ -114,19 +143,81 @@ const NEUTRALS = {
 		"hp": 1200.0, "dmg": 22.0, "cd": 1.4, "reach": 14.0, "speed": 60.0, "radius": 16.0, "corpse": 1500.0},
 }
 
-# nest 의 mat/time 은 위성 둥지 기준이며 불개미 할인(-30%)이 반영된 값이다(공통 250M / 50초).
+# 공통 건물 규칙. 이름과 생산 목록은 진영(FACTIONS)이 정한다. nest 의 mat/time 은 위성 둥지 값
 const BUILDINGS = {
-	"nest": {"name": "불둔덕", "mat": 175, "time": 35.0, "hp": 1500.0, "radius": 40.0,
-		"produces": ["worker"]},
-	"combat": {"name": "독침 부화굴", "mat": 150, "time": 30.0, "hp": 650.0, "radius": 30.0,
-		"produces": ["stinger", "sprayer", "tyrant"]},
-	"defense": {"name": "병정 굴", "mat": 150, "time": 30.0, "hp": 750.0, "radius": 30.0,
-		"produces": ["soldier", "wall"]},
-	"special": {"name": "날개 산실", "mat": 200, "time": 40.0, "hp": 550.0, "radius": 30.0,
-		"produces": ["scout", "swarm", "nurse", "raft"], "min_tier": 2},
-	"lab": {"name": "독샘 방", "mat": 200, "time": 40.0, "hp": 550.0, "radius": 28.0,
-		"produces": []},
+	"nest": {"mat": 250, "time": 50.0, "hp": 1500.0, "radius": 40.0},
+	"combat": {"mat": 150, "time": 30.0, "hp": 650.0, "radius": 30.0},
+	"defense": {"mat": 150, "time": 30.0, "hp": 750.0, "radius": 30.0},
+	"special": {"mat": 200, "time": 40.0, "hp": 550.0, "radius": 30.0, "min_tier": 2},
+	"lab": {"mat": 200, "time": 40.0, "hp": 550.0, "radius": 28.0},
 }
+
+const UPKEEP_COMMON = [[60.0, 1.0], [120.0, 0.85], [99999.0, 0.7]]
+
+# 진영별 차이. 공통 규칙에서 바꾸는 값만 적는다(기획서 부록 A)
+const FACTIONS = {
+	"fire": {
+		"name": "불개미",
+		"buildings": {
+			"nest": {"name": "불둔덕", "produces": ["worker"]},
+			"combat": {"name": "독침 부화굴", "produces": ["stinger", "sprayer", "tyrant"]},
+			"defense": {"name": "병정 굴", "produces": ["soldier", "wall"]},
+			"special": {"name": "날개 산실", "produces": ["scout", "swarm", "nurse", "raft"]},
+			"lab": {"name": "독샘 방", "produces": []},
+		},
+		"sat_nest_mult": 0.7,              # 분봉: 위성 둥지 비용·건설 시간 -30%
+		"upkeep": [[60.0, 1.0], [120.0, 0.8], [99999.0, 0.6]],   # 왕성한 식욕: 유지비 가중
+		"mat_carry_bonus": 0.0,
+		"garden": [0, 0, 0, 0],
+	},
+	"leaf": {
+		"name": "잎꾼개미",
+		"buildings": {
+			"nest": {"name": "균류 대정원", "produces": ["worker"]},
+			"combat": {"name": "대턱 육성방", "produces": ["cutter", "major", "supermajor"]},
+			"defense": {"name": "수문 병영", "produces": ["gate", "minim"]},
+			"special": {"name": "공생균 배양방", "produces": ["pathfinder", "medic", "spore"]},
+			"lab": {"name": "균사 연구실", "produces": []},
+		},
+		"sat_nest_mult": 1.0,
+		"upkeep": UPKEEP_COMMON,
+		"mat_carry_bonus": 5.0,            # 잎꾼 일꾼은 재료를 15 씩 나른다
+		"garden": [4, 8, 12, 2],           # 정원사 슬롯: 주 둥지 I / II / III, 위성 둥지
+	},
+}
+
+# 균류 정원: 정원사 1기가 초당 재료 0.75 를 식량으로 바꾼다(분당 재료 45 → 식량 90)
+const GARDEN_MAT_PER_SEC = 0.75
+const GARDEN_RATIO = 2.0
+const GARDEN_RATIO_HIGH = 2.5          # 고수확 균주
+const GARDEN_DAMAGED_MULT = 0.5        # 본진 체력 50% 미만이면 정원 효율 절반
+const BIG_GARDEN_MULT = 1.5            # 분기: 거대 정원
+const MEDIC_RADIUS = 120.0
+const MEDIC_HEAL = 3.0                 # 초당 회복
+const PATHFINDER_RADIUS = 150.0
+const PATHFINDER_WORKER_SPEED = 1.2
+const SHEAR_MULT = 1.5                 # 절단 턱: 건물·거점화 유닛에 추가 피해
+const SIEGE_MULT = 2.5                 # 초대형 병정: 건물·거점화 유닛에 큰 피해
+const MINIM_BONUS = 1.5                # 호위 소형개미: 빠른 적·공중 적에게 추가 피해
+const FAST_SPEED = 100.0
+const SPORE_ZONE_TIME = 6.0
+const SPORE_ZONE_RADIUS = 50.0
+const SPORE_ZONE_DPS = 6.0
+const HITCH_TAKEN = 0.7                # 탑승 호위: 일꾼이 받는 피해 -30%
+const HITCH_REFLECT = 2.0              # 탑승 호위: 일꾼을 때린 적에게 반격 피해
+const WAR_FUNGUS_FOOD = 300
+const WAR_FUNGUS_SHIELD = 40.0
+const WAR_FUNGUS_TIME = 20.0
+const WAR_FUNGUS_COOLDOWN = 90.0
+
+static func faction_building(f, kind):
+	var out = BUILDINGS[kind].duplicate()
+	var fd = FACTIONS[f]
+	out.merge(fd["buildings"][kind], true)
+	if kind == "nest":
+		out["mat"] = int(round(out["mat"] * fd["sat_nest_mult"]))
+		out["time"] = out["time"] * fd["sat_nest_mult"]
+	return out
 
 # 연구. tier: 필요한 주 둥지 등급, req: 선행 연구, group: 같은 group 은 하나만 선택(분기 진화)
 const RESEARCH = {
@@ -157,7 +248,7 @@ const RESEARCH = {
 	"flight1": {"name": "비행 근육", "cat": "body", "line": "flight", "lvl": 1, "tier": 2, "mat": 150, "food": 50, "time": 75.0,
 		"tip": "공중 유닛 이동 속도 +15%, 체력 +10%", "req": "", "group": ""},
 	"venom1": {"name": "솔레놉신 독침", "cat": "body", "line": "venom", "lvl": 1, "tier": 2, "mat": 200, "food": 100, "time": 90.0,
-		"tip": "전투 유닛의 공격이 중첩 독(초당 1, 5초, 최대 5중첩)을 남긴다", "req": "", "group": ""},
+		"tip": "전투 유닛의 공격이 중첩 독(초당 1, 5초, 최대 5중첩)을 남긴다", "req": "", "group": "", "faction": "fire"},
 	"spawn1": {"name": "산란 촉진 I", "cat": "colony", "line": "spawn", "lvl": 1, "tier": 1, "mat": 100, "food": 0, "time": 60.0,
 		"tip": "일꾼 생산 시간 -15%", "req": "", "group": ""},
 	"spawn2": {"name": "산란 촉진 II", "cat": "colony", "line": "spawn", "lvl": 2, "tier": 2, "mat": 175, "food": 0, "time": 90.0,
@@ -179,17 +270,31 @@ const RESEARCH = {
 	"troph2": {"name": "영양 교환 II", "cat": "colony", "line": "troph", "lvl": 2, "tier": 3, "mat": 300, "food": 0, "time": 105.0,
 		"tip": "유지비로 줄어드는 식량 수입 25%p씩 완화", "req": "troph1", "group": ""},
 	"multiqueen": {"name": "다여왕 군체", "cat": "unique", "line": "multiqueen", "lvl": 1, "tier": 2, "mat": 200, "food": 0, "time": 75.0,
-		"tip": "위성 둥지 일꾼 생산 감속 제거. 주 둥지가 파괴되면 계승이 즉시 이루어지고 등급이 떨어지지 않음", "req": "", "group": ""},
+		"tip": "위성 둥지 일꾼 생산 감속 제거. 주 둥지가 파괴되면 계승이 즉시 이루어지고 등급이 떨어지지 않음", "req": "", "group": "", "faction": "fire"},
 	"alarm": {"name": "경보 페로몬", "cat": "unique", "line": "alarm", "lvl": 1, "tier": 2, "mat": 150, "food": 50, "time": 60.0,
-		"tip": "아군 전투 유닛이 죽으면 주변 아군 공격 속도 +10% (5초, 최대 3중첩)", "req": "", "group": ""},
+		"tip": "아군 전투 유닛이 죽으면 주변 아군 공격 속도 +10% (5초, 최대 3중첩)", "req": "", "group": "", "faction": "fire"},
 	"raft_form": {"name": "뗏목 진형", "cat": "unique", "line": "raft_form", "lvl": 1, "tier": 2, "mat": 150, "food": 0, "time": 60.0,
-		"tip": "뗏목단 생산 가능. 물을 건너 유닛을 실어 나른다", "req": "", "group": ""},
+		"tip": "뗏목단 생산 가능. 물을 건너 유닛을 실어 나른다", "req": "", "group": "", "faction": "fire"},
+	"shear1": {"name": "절단 턱", "cat": "body", "line": "shear", "lvl": 1, "tier": 2, "mat": 200, "food": 100, "time": 90.0,
+		"tip": "전투 유닛이 건물과 거점화 유닛에 50% 추가 피해", "req": "", "group": "", "faction": "leaf"},
+	"high_yield": {"name": "고수확 균주", "cat": "unique", "line": "high_yield", "lvl": 1, "tier": 2, "mat": 200, "food": 0, "time": 75.0,
+		"tip": "균류 정원 변환 비율 재료 1 → 식량 2.5", "req": "", "group": "", "faction": "leaf"},
+	"hitchhiker": {"name": "탑승 호위", "cat": "unique", "line": "hitchhiker", "lvl": 1, "tier": 2, "mat": 150, "food": 50, "time": 60.0,
+		"tip": "일꾼이 받는 피해 -30%, 일꾼을 공격한 적에게 반격 피해", "req": "", "group": "", "faction": "leaf"},
+	"antibiotic": {"name": "항생 공생균", "cat": "unique", "line": "antibiotic", "lvl": 1, "tier": 2, "mat": 150, "food": 0, "time": 60.0,
+		"tip": "공생균 살포병이 건물도 회복. 본진이 손상돼도 정원 효율 유지", "req": "", "group": "", "faction": "leaf"},
+	"supermajor_caste": {"name": "초대형 계급", "cat": "unique", "line": "supermajor_caste", "lvl": 1, "tier": 3, "mat": 250, "food": 0, "time": 90.0,
+		"tip": "초대형 병정 생산 가능", "req": "", "group": "", "faction": "leaf"},
+	"big_garden": {"name": "[분기] 거대 정원", "cat": "unique", "line": "big_garden", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
+		"tip": "정원사 슬롯 +50%. 전쟁 균류와 동시 선택 불가", "req": "", "group": "branch", "faction": "leaf"},
+	"war_fungus": {"name": "[분기] 전쟁 균류", "cat": "unique", "line": "war_fungus", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
+		"tip": "주 둥지에서 식량 300 으로 전 병력에 포자 갑옷(피해 40 흡수, 20초) 부여. 재사용 90초. 거대 정원과 동시 선택 불가", "req": "", "group": "branch", "faction": "leaf"},
 	"tyrant_blood": {"name": "폭군의 혈통", "cat": "unique", "line": "tyrant_blood", "lvl": 1, "tier": 3, "mat": 250, "food": 0, "time": 90.0,
-		"tip": "폭군 대병 생산 가능", "req": "", "group": ""},
+		"tip": "폭군 대병 생산 가능", "req": "", "group": "", "faction": "fire"},
 	"wave": {"name": "[분기] 끝없는 물결", "cat": "unique", "line": "wave", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
-		"tip": "침병·병정개미가 3기 한 조로 생산. 유지비 감소폭 1.25배. 타오르는 독과 동시 선택 불가", "req": "", "group": "branch"},
+		"tip": "침병·병정개미가 3기 한 조로 생산. 유지비 감소폭 1.25배. 타오르는 독과 동시 선택 불가", "req": "", "group": "branch", "faction": "fire"},
 	"burn": {"name": "[분기] 타오르는 독", "cat": "unique", "line": "burn", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
-		"tip": "독이 건물에도 들어가고 최대 중첩 5→8. 끝없는 물결과 동시 선택 불가", "req": "venom1", "group": "branch"},
+		"tip": "독이 건물에도 들어가고 최대 중첩 5→8. 끝없는 물결과 동시 선택 불가", "req": "venom1", "group": "branch", "faction": "fire"},
 }
 
 const NODES = {

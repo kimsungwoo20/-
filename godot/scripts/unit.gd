@@ -1,7 +1,7 @@
 extends Node2D
 const Data = preload("res://scripts/data.gd")
 
-enum {IDLE, MOVE, AMOVE, ATTACK, GATHER, RETURN, BUILD, BOARD}
+enum {IDLE, MOVE, AMOVE, ATTACK, GATHER, RETURN, BUILD, BOARD, GARDEN}
 
 var game
 var pid = 0
@@ -37,6 +37,10 @@ var nav_t = 0.0
 var carried = false      # 뗏목에 타 있는 동안에는 지도에 없는 것으로 취급
 var cargo = []
 var board_target = null
+var garden_target = null
+var shield = 0.0         # 포자 갑옷(전쟁 균류)이 흡수할 남은 피해
+var shield_t = 0.0
+var trail = false        # 길잡이 소형개미 근처의 일꾼
 var dead = false
 var selected = false
 var facing = 0.0
@@ -107,7 +111,10 @@ func detect_range():
 	return d.get("detect", 0.0)
 
 func spd():
-	return d["speed"] * game.players[pid].speed_mult(air)
+	var s = d["speed"] * game.players[pid].speed_mult(air)
+	if trail:
+		s *= Data.PATHFINDER_WORKER_SPEED
+	return s
 
 func can_hit(t):
 	return hits_air or not t.air
@@ -221,6 +228,27 @@ func unload():
 	cargo.clear()
 	return true
 
+func cmd_garden(nest):
+	if not is_worker:
+		return
+	_leave()
+	garden_target = nest
+	target = null
+	build_target = null
+	state = GARDEN
+
+func _do_garden(delta):
+	if not _valid(garden_target) or garden_target.pid != pid or garden_target.garden_slots() == 0:
+		garden_target = null
+		state = IDLE
+		return
+	if _go(garden_target.position, delta, garden_target.radius + radius + 6.0):
+		var n = garden_target
+		garden_target = null
+		state = IDLE
+		if not n.add_gardener(self) and pid == game.human_id:
+			game.msg("정원사 자리가 없습니다")
+
 func cmd_stop():
 	_leave()
 	target = null
@@ -239,11 +267,19 @@ func _physics_process(delta):
 	_tick_status(delta)
 	if dead:
 		return
-	if kind == "stinger":
-		aura_t -= delta
-		if aura_t <= 0.0:
-			aura_t = 0.5
+	if shield_t > 0.0:
+		shield_t -= delta
+		if shield_t <= 0.0:
+			shield = 0.0
+	aura_t -= delta
+	if aura_t <= 0.0:
+		aura_t = 0.5
+		if kind == "stinger":
 			buffed = game.tyrant_near(position, pid)
+		elif kind == "medic":
+			game.medic_pulse(self, 0.5)
+		elif is_worker and not is_neutral:
+			trail = game.pathfinder_near(position, pid)
 	match state:
 		IDLE:
 			if not rooted:
@@ -269,6 +305,8 @@ func _physics_process(delta):
 			_do_build(delta)
 		BOARD:
 			_do_board(delta)
+		GARDEN:
+			_do_garden(delta)
 	queue_redraw()
 
 func _do_board(delta):
@@ -302,7 +340,8 @@ func _leash():
 	return false
 
 func _valid(t):
-	return t != null and is_instance_valid(t) and not t.dead
+	# 정원이나 뗏목 안에 들어간 유닛은 목표가 될 수 없다
+	return t != null and is_instance_valid(t) and not t.dead and not t.get("carried")
 
 func _node_ok():
 	return node != null and is_instance_valid(node) and node.available()
@@ -347,10 +386,22 @@ func _do_attack(delta):
 				cd *= 1.0 - 0.1 * alarm_stacks
 			var p = game.players[pid]
 			var dmg = d["dmg"]
+			var upg = d.get("upg", 1.0)
 			if d["reach"] <= 30.0:
-				dmg *= p.melee_mult()
+				dmg *= p.melee_mult(upg)
 			else:
-				dmg *= p.ranged_mult()
+				dmg *= p.ranged_mult(upg)
+			# 건물·거점화 유닛에 대한 추가 피해
+			var hard = target.get("kind") != null and (target.get("built") != null or target.get("rooted") == true)
+			if hard and not is_worker:
+				if d.get("siege", false):
+					dmg *= Data.SIEGE_MULT
+				if p.has("shear1"):
+					dmg *= Data.SHEAR_MULT
+			if d.get("minim", false) and (target.get("air") == true or (target.get("d") != null and target.d.get("speed", 0.0) >= Data.FAST_SPEED)):
+				dmg *= Data.MINIM_BONUS
+			if d.get("spore", false):
+				game.add_spore_zone(target.position, pid)
 			if d["reach"] > 30.0:
 				game.add_shot(position, target.position, Color(0.8, 1.0, 0.3))
 			target.take_damage(dmg, self)
@@ -364,7 +415,7 @@ func _do_attack(delta):
 		_go(target.position, delta, reach - 2.0)
 		# 건물을 치러 가는 길에 적 유닛이 붙으면 그쪽을 먼저 상대한다
 		think -= delta
-		if think <= 0.0 and not is_neutral:
+		if think <= 0.0 and not is_neutral and target.get("built") != null:
 			think = 0.5
 			var t = game.find_enemy_unit(position, pid, 60.0, hits_air)
 			if t != null:
@@ -387,7 +438,7 @@ func _do_gather(delta):
 		return
 	work -= delta
 	if work <= 0.0:
-		var cap = game.players[pid].carry_amount()
+		var cap = game.players[pid].carry_amount(node.res_type())
 		carry_res = node.res_type()
 		last_res = carry_res
 		var n = node
@@ -499,9 +550,19 @@ func _separation():
 func take_damage(amount, attacker):
 	if dead:
 		return
-	amount *= game.players[pid].taken_mult()
+	var pp = game.players[pid]
+	amount *= pp.taken_mult(d.get("upg", 1.0))
 	if rooted:
 		amount *= Data.ROOT_DAMAGE_MULT
+	if is_worker and pp.has("hitchhiker"):
+		amount *= Data.HITCH_TAKEN
+		# 일꾼 등에 탄 소형 개미가 반격한다
+		if attacker != null and is_instance_valid(attacker) and attacker.get("pid") != pid and attacker.has_method("take_damage") and not attacker.get("dead"):
+			attacker.take_damage(Data.HITCH_REFLECT, null)
+	if shield > 0.0:
+		var absorbed = min(shield, amount)
+		shield -= absorbed
+		amount -= absorbed
 	hp -= amount
 	if hp <= 0.0:
 		dead = true
@@ -582,12 +643,19 @@ func _draw():
 		draw_circle(Vector2(-r * 0.2, r * 0.9), r * 0.7, Color(1, 1, 1, 0.45))
 	draw_circle(Vector2(-r * 0.9, 0), r * 0.75, c.darkened(0.3))
 	draw_circle(Vector2.ZERO, r * 0.5, c)
-	if kind == "soldier":
+	if kind in ["soldier", "major", "supermajor", "gate"]:
 		draw_circle(Vector2(r * 0.85, 0), r * 0.75, c.lightened(0.1))
+		if kind != "soldier":
+			draw_line(Vector2(r * 1.4, -r * 0.4), Vector2(r * 1.9, -r * 0.1), c.lightened(0.3), 2.0)
+			draw_line(Vector2(r * 1.4, r * 0.4), Vector2(r * 1.9, r * 0.1), c.lightened(0.3), 2.0)
 	else:
 		draw_circle(Vector2(r * 0.8, 0), r * 0.55, c.lightened(0.15))
 	if kind == "sprayer":
 		draw_circle(Vector2(-r * 0.9, 0), r * 0.4, Color(0.8, 1.0, 0.3))
+	if kind == "medic" or kind == "spore":
+		draw_circle(Vector2(-r * 0.9, 0), r * 0.4, Color(0.75, 0.9, 0.55))
+	if kind == "cutter":
+		draw_circle(Vector2(r * 0.2, -r * 0.9), r * 0.45, Color(0.35, 0.7, 0.3))
 	if is_worker:
 		draw_circle(Vector2.ZERO, r * 0.25, Color(1, 1, 1, 0.7))
 	if kind == "raft":
@@ -601,6 +669,8 @@ func _draw():
 			cc = Data.MAT_COLOR
 		draw_circle(Vector2(r * 1.6, 0), 3.0, cc)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if shield > 0.0:
+		draw_arc(Vector2.ZERO, radius + 4.0, 0.0, TAU, 20, Color(0.75, 0.9, 0.55, 0.8), 2.0)
 	if venom_stacks > 0:
 		draw_circle(Vector2(0, -radius - 13.0), 2.0 + venom_stacks * 0.4, Color(0.7, 1.0, 0.2, 0.9))
 	if alarm_stacks > 0:

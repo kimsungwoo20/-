@@ -1,25 +1,38 @@
 extends RefCounted
-# 단순 규칙 기반 인공지능(불개미 운영). 사람과 같은 규칙으로 플레이한다.
+# 단순 규칙 기반 인공지능. 사람과 같은 규칙으로 플레이한다(단, 아직 전장의 안개를 무시한다).
+# 진영별 차이는 PLANS 의 유닛·연구 목록으로만 둔다. 진영별 운영은 10단계에서 다듬는다.
 const Data = preload("res://scripts/data.gd")
 const UnitScript = preload("res://scripts/unit.gd")
 
 var game
 var pid = 0
 var t = 0.0
-var wave_size = 10
+var wave_size = 8          # 공격을 시작하는 병력 인구
 var attacking = false
 var defend_pos = Vector2.ZERO
 var defend_t = 0.0
-var branch_pick = "wave"
-# "branch" 자리에서 분기 진화(둘 중 무작위)를 고른다
-const RESEARCH_ORDER = ["carry1", "jaw1", "shell1", "spawn1", "colony1", "multiqueen", "alarm", "jaw2",
-	"venom1", "shell2", "carry2", "nursery1", "colony2", "gland1", "size1", "tyrant_blood", "branch",
-	"jaw3", "shell3", "troph1", "legs1", "size2", "nursery2", "gland2", "troph2", "flight1", "spawn2", "gland3"]
+var branch_pick = ""
+var plan = {}
+# t1/t2/t3: 전투 생산 건물 유닛, def: 방어 생산 건물 유닛, air: 특수 생산 건물 유닛
+# research 의 "branch" 자리에서 분기 진화(둘 중 무작위)를 고른다
+const PLANS = {
+	"fire": {"t1": "stinger", "t2": "sprayer", "t3": "tyrant", "def": "soldier", "air": "swarm",
+		"branches": ["wave", "burn"],
+		"research": ["carry1", "jaw1", "shell1", "spawn1", "colony1", "multiqueen", "alarm", "jaw2",
+			"venom1", "shell2", "carry2", "nursery1", "colony2", "gland1", "size1", "tyrant_blood", "branch",
+			"jaw3", "shell3", "troph1", "legs1", "size2", "nursery2", "gland2", "troph2", "flight1", "spawn2", "gland3"]},
+	"leaf": {"t1": "cutter", "t2": "major", "t3": "supermajor", "def": "minim", "air": "spore",
+		"branches": ["big_garden", "war_fungus"],
+		"research": ["high_yield", "carry1", "jaw1", "shell1", "hitchhiker", "colony1", "spawn1", "jaw2",
+			"shear1", "shell2", "antibiotic", "carry2", "nursery1", "colony2", "size1", "supermajor_caste", "branch",
+			"jaw3", "shell3", "troph1", "legs1", "size2", "nursery2", "troph2", "flight1", "spawn2"]},
+}
 
 func setup(g, id):
 	game = g
 	pid = id
-	branch_pick = ["wave", "burn"][randi() % 2]
+	plan = PLANS[game.players[id].faction]
+	branch_pick = plan["branches"][randi() % 2]
 
 func on_attacked(b):
 	defend_pos = b.position
@@ -42,7 +55,8 @@ func tick(delta):
 	for u in game.units:
 		if u.pid == pid:
 			if u.is_worker:
-				workers.append(u)
+				if not u.carried:
+					workers.append(u)
 			elif u.can_fight:
 				army.append(u)
 	var nests = []
@@ -123,7 +137,7 @@ func tick(delta):
 
 	# 연구: 우선순위 목록에서 지금 예약할 수 있는 첫 연구
 	if lab != null and lab.queue.size() < 2:
-		for id in RESEARCH_ORDER:
+		for id in plan["research"]:
 			if id == "branch":
 				id = branch_pick
 			var r = Data.RESEARCH[id]
@@ -133,22 +147,46 @@ func tick(delta):
 				break
 
 	# 병력 생산
+	var t3 = Data.UNITS[plan["t3"]]
 	for b in combats:
 		if b.queue.size() < 2:
-			if p.has("tyrant_blood") and p.mat >= 200.0 and p.food >= 300.0 and randf() < 0.3:
-				game.enqueue_unit(b, "tyrant")
+			if main.tier >= 3 and p.has(t3["needs"]) and p.mat >= t3["mat"] + 50 and p.food >= t3["food"] + 50 and randf() < 0.3:
+				game.enqueue_unit(b, plan["t3"])
 			elif main.tier >= 2 and p.mat >= 80.0 and randf() < 0.4:
-				game.enqueue_unit(b, "sprayer")
-			elif p.food >= 50.0:
-				game.enqueue_unit(b, "stinger")
+				game.enqueue_unit(b, plan["t2"])
+			elif p.food >= Data.UNITS[plan["t1"]]["food"]:
+				game.enqueue_unit(b, plan["t1"])
 	for b in specials:
 		if b.queue.is_empty() and p.mat >= 150.0 and p.food >= 150.0:
-			game.enqueue_unit(b, "swarm")
+			game.enqueue_unit(b, plan["air"])
 	for b in defenses:
 		if b.queue.is_empty() and p.food >= 160.0:
-			game.enqueue_unit(b, "soldier")
+			game.enqueue_unit(b, plan["def"])
+
+	_tend_garden(nests, workers, p)
+	if attacking and p.has("war_fungus") and p.war_cd <= 0.0 and p.food > 500.0:
+		game.use_war_fungus(pid)
 
 	_command_army(army, main)
+
+# 잎꾼개미: 재료가 넉넉하면 정원사를 늘리고, 바닥나면 줄인다
+func _tend_garden(nests, workers, p):
+	for n in nests:
+		var slots = n.garden_slots()
+		if slots == 0:
+			continue
+		var want = min(slots, int(workers.size() / 3))
+		if p.mat < 30.0 and n.gardeners.size() > 0:
+			n.release_gardener()
+		elif p.mat > 120.0 and n.gardeners.size() < want:
+			var going = 0
+			for w in workers:
+				if w.state == UnitScript.GARDEN:
+					going += 1
+			if going == 0:
+				var free = workers.filter(func(w): return not w.carried and w.state != UnitScript.BUILD)
+				if free.size() > 0:
+					_nearest(free, n.position).cmd_garden(n)
 
 func _assign_workers(workers):
 	var n_mat = 0
@@ -190,7 +228,7 @@ func _find_spot(kind, center):
 	return null
 
 func _build(kind, center, workers):
-	if game.players[pid].mat < Data.BUILDINGS[kind]["mat"]:
+	if game.players[pid].mat < game.bdata(pid, kind)["mat"]:
 		return
 	var pos = _find_spot(kind, center)
 	if pos == null:
@@ -198,7 +236,7 @@ func _build(kind, center, workers):
 	game.start_build(pid, kind, pos, [_nearest(workers, pos)])
 
 func _expand(main, workers):
-	if game.players[pid].mat < Data.BUILDINGS["nest"]["mat"]:
+	if game.players[pid].mat < game.bdata(pid, "nest")["mat"]:
 		return
 	var best = null
 	var bd = 1e12
@@ -230,11 +268,14 @@ func _command_army(army, main):
 			if u.state == UnitScript.IDLE or u.state == UnitScript.MOVE:
 				u.cmd_amove(defend_pos)
 		return
-	if not attacking and army.size() >= wave_size:
+	var army_pop = 0.0
+	for u in army:
+		army_pop += u.pop
+	if not attacking and army_pop >= wave_size:
 		attacking = true
 	if attacking and army.size() < 4:
 		attacking = false
-		wave_size = min(wave_size + 6, 60)
+		wave_size = min(wave_size + 5, 50)
 	if attacking:
 		var tgt = null
 		var bd = 1e12

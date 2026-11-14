@@ -493,6 +493,198 @@ func terrain_checks(game):
 	check(not game.units.has(raft) and not game.units.has(riders[0]) and game.units.size() == n0 - 2, "뗏목단이 죽으면 타고 있던 유닛도 죽는다")
 	clear_units(game)
 
+	await leaf_checks(game)
+
+func hit_once(game, attacker, victim):
+	# attacker 가 victim 을 처음 때린 피해량
+	var h0 = victim.hp
+	attacker.cmd_attack(victim)
+	for i in 300:
+		await physics_frame
+		if victim.hp < h0:
+			break
+	attacker.cmd_stop()
+	return h0 - victim.hp
+
+func leaf_checks(game):
+	var L = game.players[1]
+	var F = game.players[0]
+	clear_units(game)
+	check(L.faction == "leaf" and F.faction == "fire", "점검 환경: 플레이어 0 불개미, 플레이어 1 잎꾼개미")
+	var nest = game.main_nest(1)
+	check(nest.d["name"] == "균류 대정원" and game.bdata(1, "combat")["name"] == "대턱 육성방", "잎꾼개미 건물 이름")
+	check(game.bdata(0, "nest")["mat"] == 175 and game.bdata(1, "nest")["mat"] == 250, "위성 둥지 비용: 불개미 175(분봉 -30%), 잎꾼개미 250")
+	F.pop_used = 100.0
+	L.pop_used = 100.0
+	check(abs(F.upkeep_mult() - 0.8) < 0.001 and abs(L.upkeep_mult() - 0.85) < 0.001, "인구 100 식량 수입: 불개미 80%, 잎꾼개미 85%(공통)")
+	check(L.carry_amount("mat") - L.carry_amount("food") == 5.0 and F.carry_amount("mat") == F.carry_amount("food"), "잎꾼개미 일꾼은 재료를 5 더 나른다")
+	check(game.research_state(game.buildings.filter(func(b): return b.pid == 0 and b.kind == "lab")[0], "high_yield") == "faction", "불개미는 잎꾼개미 연구를 할 수 없다")
+	check(game.main_nest(0).garden_slots() == 0, "불개미 둥지에는 균류 정원이 없다")
+
+	# 균류 정원
+	nest.tier = 1
+	check(nest.garden_slots() == 4, "정원사 슬롯: 주 둥지 I 에서 4")
+	nest.tier = 2
+	check(nest.garden_slots() == 8, "정원사 슬롯: 주 둥지 II 에서 8")
+	var ws = []
+	for u in game.units:
+		if u.pid == 1 and u.is_worker and not u.carried:
+			ws.append(u)
+	ws[0].cmd_garden(nest)
+	ws[1].cmd_garden(nest)
+	Engine.time_scale = 4.0
+	await wait(2.0)
+	Engine.time_scale = 1.0
+	check(nest.gardeners.size() == 2 and ws[0].carried and not ws[0].visible, "일꾼이 균류 정원에 들어간다")
+	L.mat = 1000.0
+	L.food = 0.0
+	L.pop_used = 10.0
+	var t0 = game.elapsed
+	await wait(5.0)
+	var dt = game.elapsed - t0
+	check(abs((1000.0 - L.mat) - 0.75 * 2 * dt) < 0.3, "정원사 2기: 초당 재료 1.5 소모 (실제 %.2f)" % ((1000.0 - L.mat) / dt))
+	check(abs(L.food - (1000.0 - L.mat) * 2.0) < 0.3, "재료 1 → 식량 2")
+	L.research["high_yield"] = true
+	var m1 = L.mat
+	var f1 = L.food
+	await wait(2.0)
+	check(abs((L.food - f1) - (m1 - L.mat) * 2.5) < 0.3, "고수확 균주: 재료 1 → 식량 2.5")
+	L.mat = 0.0
+	f1 = L.food
+	await wait(1.0)
+	check(L.food == f1, "재료가 없으면 정원이 멈춘다")
+	L.mat = 1000.0
+	nest.hp = nest.max_hp * 0.4
+	m1 = L.mat
+	await wait(2.0)
+	var used_damaged = m1 - L.mat
+	check(abs(used_damaged - 0.75 * 2 * 0.5 * 2.0) < 0.15, "본진 체력 50% 미만이면 정원 효율 절반")
+	L.research["antibiotic"] = true
+	m1 = L.mat
+	await wait(2.0)
+	check(abs((m1 - L.mat) - 0.75 * 2 * 2.0) < 0.15, "항생 공생균: 본진이 손상돼도 정원 효율 유지")
+	nest.hp = nest.max_hp
+	nest.tier = 1
+	L.research["big_garden"] = true
+	check(nest.garden_slots() == 6, "거대 정원: 슬롯 +50% (4 → 6)")
+	L.research.erase("big_garden")
+	var out = nest.release_gardener()
+	check(out != null and not out.carried and out.visible and nest.gardeners.size() == 1, "정원사를 밖으로 내보낸다")
+	# 정원 안의 일꾼은 공격 목표가 될 수 없다
+	var inside = nest.gardeners[0]
+	var biter = game.spawn_unit(0, "stinger", nest.position + Vector2(50, 0))
+	biter.cmd_attack(inside)
+	await wait(1.0)
+
+	check(inside.hp == inside.max_hp and biter.target != inside, "정원 안의 일꾼은 공격받지 않는다")
+	biter.dead = true
+	game.remove_unit(biter)
+	# 위성 둥지가 무너지면 정원사도 죽는다
+	var sat = game.spawn_building(1, "nest", Vector2(2700, 400), true, false)
+	check(sat.garden_slots() == 2, "위성 둥지 정원사 슬롯 2")
+	check(sat.add_gardener(ws[2]) and sat.add_gardener(ws[3]) and not sat.add_gardener(ws[4]), "슬롯이 차면 더 넣을 수 없다")
+	sat.take_damage(99999.0, null)
+	await wait(0.1)
+	check(not game.units.has(ws[2]) and not game.units.has(ws[3]), "둥지가 무너지면 안의 정원사도 죽는다")
+
+	# 유닛 능력
+	clear_units(game)
+	var tb = game.spawn_building(0, "defense", Vector2(2300, 1250), true, false)
+	var cu = game.spawn_unit(1, "cutter", tb.position + Vector2(50, 0))
+	var d0 = await hit_once(game, cu, tb)
+	L.research["shear1"] = true
+	var d1 = await hit_once(game, cu, tb)
+	check(abs(d0 - 7.0) < 0.01 and abs(d1 - 10.5) < 0.01, "절단 턱: 건물에 50%% 추가 피해 (%.1f → %.1f)" % [d0, d1])
+	L.research.erase("shear1")
+	L.research["jaw1"] = true
+	var d2 = await hit_once(game, cu, tb)
+	check(abs(d2 - 7.0 * 1.15) < 0.01, "절단병은 큰턱 강화 효과 1.5배 (+15%%, 실제 %.2f)" % d2)
+	L.research.erase("jaw1")
+	cu.dead = true
+	game.remove_unit(cu)
+	var sm = game.spawn_unit(1, "supermajor", tb.position + Vector2(60, 0))
+	var d3 = await hit_once(game, sm, tb)
+	check(abs(d3 - 26.0 * Data.SIEGE_MULT) < 0.01, "초대형 병정: 건물에 2.5배 피해 (%.0f)" % d3)
+	sm.dead = true
+	game.remove_unit(sm)
+	var mn = game.spawn_unit(1, "minim", Vector2(2300, 1500))
+	# 상대가 반격해 소형개미가 죽지 않게 체력을 크게 둔다
+	mn.max_hp = 9999.0
+	mn.hp = 9999.0
+	var fly = game.spawn_unit(0, "swarm", Vector2(2320, 1500))
+	fly.max_hp = 999.0
+	fly.hp = 999.0
+	var d4 = await hit_once(game, mn, fly)
+	check(abs(d4 - 4.5 * F.taken_mult()) < 0.01, "호위 소형개미는 공중 유닛을 물고 1.5배 피해 (%.1f)" % d4)
+	var slow = game.spawn_unit(0, "soldier", Vector2(2300, 1530))
+	slow.max_hp = 999.0
+	slow.hp = 999.0
+	var d5 = await hit_once(game, mn, slow)
+	check(abs(d5 - 3.0 * F.taken_mult()) < 0.01, "느린 지상 유닛에게는 추가 피해 없음 (%.1f)" % d5)
+	clear_units(game)
+	await wait(0.1)
+	# 공생균 살포병
+	var hurt = game.spawn_unit(1, "major", Vector2(2300, 1800))
+	hurt.hp = 100.0
+	var med = game.spawn_unit(1, "medic", Vector2(2340, 1800))
+	await wait(2.0)
+	check(hurt.hp > 104.0, "공생균 살포병이 주변 아군을 회복 (%.1f → %.1f)" % [100.0, hurt.hp])
+	tb.hp = 100.0
+	var ab = game.spawn_building(1, "combat", Vector2(2420, 1800), true, false)
+	ab.hp = 100.0
+	await wait(2.0)
+	check(ab.hp > 104.0, "항생 공생균: 건물도 회복")
+	# 길잡이 소형개미
+	var wk = game.spawn_unit(1, "worker", Vector2(2000, 1850))
+	await wait(0.6)
+	var v0 = wk.spd()
+	var pf = game.spawn_unit(1, "pathfinder", Vector2(2040, 1850))
+	await wait(0.6)
+	check(abs(wk.spd() - v0 * 1.2) < 0.01, "길잡이 소형개미 근처 일꾼 이동 속도 +20%")
+	# 탑승 호위
+	var att = game.spawn_unit(0, "stinger", Vector2(2000, 1880))
+	att.max_hp = 999.0
+	att.hp = 999.0
+	L.research["hitchhiker"] = true
+	var wh = wk.hp
+	wk.take_damage(10.0, att)
+	check(abs((wh - wk.hp) - 7.0) < 0.01 and abs(att.hp - (999.0 - Data.HITCH_REFLECT * F.taken_mult())) < 0.01, "탑승 호위: 일꾼 피해 -30%, 공격한 적에게 반격")
+	clear_units(game)
+	# 포자 살포 날개개미
+	var target_b = game.spawn_building(0, "lab", Vector2(2600, 1700), true, false)
+	var sp = game.spawn_unit(1, "spore", Vector2(2600, 1630))
+	sp.cmd_attack(target_b)
+	await wait(4.0)
+	check(game.spore_zones.size() > 0, "포자 살포 날개개미의 공격이 포자 지대를 만든다")
+	var bh = target_b.hp
+	sp.cmd_stop()
+	await wait(1.0)
+	check(target_b.hp < bh - 4.0, "포자 지대가 건물에 지속 피해")
+	sp.dead = true
+	game.remove_unit(sp)
+	target_b.take_damage(99999.0, null)
+	# 초대형 계급
+	var cb = game.spawn_building(1, "combat", Vector2(2700, 1000), true, false)
+	nest.tier = 3
+	L.food = 5000.0
+	L.mat = 5000.0
+	check(not game.enqueue_unit(cb, "supermajor"), "초대형 계급 없이는 초대형 병정 생산 불가")
+	L.research["supermajor_caste"] = true
+	check(game.enqueue_unit(cb, "supermajor"), "초대형 계급 연구 후 생산 가능")
+	game.cancel_last(cb)
+	# 전쟁 균류
+	var army = [game.spawn_unit(1, "cutter", Vector2(2700, 1200)), game.spawn_unit(1, "major", Vector2(2720, 1200))]
+	check(not game.use_war_fungus(1), "전쟁 균류 없이는 포자 갑옷 불가")
+	L.research["war_fungus"] = true
+	var fw = L.food
+	check(game.use_war_fungus(1) and L.food == fw - Data.WAR_FUNGUS_FOOD, "포자 갑옷: 식량 %d 소모" % Data.WAR_FUNGUS_FOOD)
+	check(army[0].shield == Data.WAR_FUNGUS_SHIELD and army[1].shield == Data.WAR_FUNGUS_SHIELD, "전 병력에 포자 갑옷")
+	var ah = army[0].hp
+	army[0].take_damage(30.0, null)
+	check(army[0].hp == ah and abs(army[0].shield - 10.0) < 0.01, "포자 갑옷이 피해를 먼저 흡수")
+	check(not game.use_war_fungus(1), "재사용 대기 중에는 다시 쓸 수 없다")
+	clear_units(game)
+
 func _initialize():
 	Engine.time_scale = 1.0
 	var game = load("res://scenes/main.tscn").instantiate()
