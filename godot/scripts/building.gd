@@ -36,6 +36,8 @@ var march_dest = null
 var path = []
 var nav_t = 0.0
 var pop_cost = 0.0      # 군대개미: 건물이 차지하는 인구
+var nid = 0
+var net_gardeners = 0   # 참가자 화면: 방장이 알려 준 정원사 수
 
 func setup(g, p, k, pos, finished, main):
 	game = g
@@ -227,7 +229,13 @@ func add_venom(cap, burn):
 	venom_stacks = min(venom_stacks + 1, cap)
 	venom_t = Data.VENOM_TIME
 
+func garden_count():
+	return net_gardeners if game.net_role == "client" else gardeners.size()
+
 func _physics_process(delta):
+	if game.net_role == "client":
+		queue_redraw()
+		return
 	if dead:
 		return
 	if venom_stacks > 0:
@@ -391,7 +399,7 @@ func _draw():
 					draw_circle(Vector2(-10 + i * 10, -radius - 8.0), 3.5, Color(1.0, 0.9, 0.3))
 			var gs = garden_slots()
 			for i in gs:
-				var col = Color(0.85, 0.9, 0.7, a) if i < gardeners.size() else Color(0.3, 0.35, 0.25, a)
+				var col = Color(0.85, 0.9, 0.7, a) if i < garden_count() else Color(0.3, 0.35, 0.25, a)
 				draw_circle(Vector2(radius * 0.62, 0).rotated(i * TAU / gs), 3.0, col)
 		"combat":
 			for i in 3:

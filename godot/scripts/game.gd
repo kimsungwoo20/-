@@ -58,6 +58,16 @@ var match_mode = "ffa"
 var n_players = 2
 var pop_max = 200.0
 var layout = {}
+# ---- 온라인 대전 ----
+var net_role = "offline"   # offline / host / client
+var ents = {}              # 고유 번호 -> 유닛·건물·자원 지점
+var next_nid = 1
+var controlled = {}        # 내가 조종할 수 있는 다른 pid(접속이 끊긴 아군)
+var transfers = {}         # 방장: 끊긴 pid -> 대신 조종하는 pid
+var snap_t = 0.0
+var net_research_ver = {}
+var lost_shown = false
+var camera_set = false
 
 var build_mode = ""
 var lab_tab = "body"
@@ -69,6 +79,12 @@ var pan_drag = false
 func _ready():
 	autotest = OS.get_cmdline_user_args().has("--autotest")
 	sandbox = OS.get_cmdline_user_args().has("--sandbox")
+	var net = get_node_or_null("/root/Net")
+	if net != null and net.is_online() and ConfigScript.setup != null and ConfigScript.setup.get("online", false):
+		net_role = net.role
+		net.game = self
+		tree_exiting.connect(func(): if net.game == self: net.game = null)
+		net.left.connect(_on_net_left)
 	_setup_players()
 	layout = MapGen.make(n_players)
 	terrain = TerrainScript.new()
@@ -153,6 +169,7 @@ func _match_setup():
 
 func _setup_players():
 	var cfg = _match_setup()
+	human_id = cfg.get("me", 0)
 	var slots = cfg["slots"]
 	match_mode = cfg["mode"]
 	n_players = slots.size()
@@ -166,8 +183,11 @@ func _setup_players():
 			p.faction = sl["faction"] if Data.FACTIONS.has(sl["faction"]) else Data.FACTION_IDS[randi() % Data.FACTION_IDS.size()]
 			p.team = sl["team"] if match_mode == "team" else i
 			p.diff = sl.get("diff", "normal") if Data.DIFFS.has(sl.get("diff", "normal")) else "normal"
-			p.is_ai = sl["type"] != "human" or autotest
-			p.label = "나" if not p.is_ai else "인공지능 %d" % i
+			# human: 이 화면의 사람, remote: 다른 화면의 사람(온라인), ai: 인공지능
+			p.is_ai = sl["type"] == "ai" or (autotest and sl["type"] == "human")
+			p.label = "인공지능 %d" % i if p.is_ai else sl.get("name", "나")
+			if i == human_id and not p.is_ai:
+				p.label = "나"
 			p.gather_mult = Data.DIFFS[p.diff]["gather"] if p.is_ai else 1.0
 		else:
 			p.active = false
@@ -185,7 +205,7 @@ func _setup_players():
 			if p.active:
 				p.gather_mult *= 1.0 + Data.BALANCE_GATHER * (biggest - sizes[p.team])
 	for p in players:
-		if p.active and p.is_ai and not sandbox:
+		if p.active and p.is_ai and not sandbox and net_role != "client":
 			var ai = AIScript.new()
 			ai.setup(self, p.id)
 			ais.append(ai)
@@ -219,9 +239,12 @@ func _setup_map():
 	rng.seed = 7
 	for i in 400:
 		decor.append([Vector2(rng.randf() * Data.MAP_SIZE.x, rng.randf() * Data.MAP_SIZE.y), rng.randf_range(2.0, 7.0), rng.randf_range(-0.05, 0.05)])
+	expansions = layout["expansions"].duplicate()
+	# 참가자 화면: 자원 지점·유닛·건물은 방장이 보내는 상태로 만든다
+	if net_role == "client":
+		return
 	for e in layout["nodes"]:
 		_add_node(e[0], e[1])
-	expansions = layout["expansions"].duplicate()
 	# 중립 무리: 기지 근처 유충(소형), 기지 사이 거미(중형), 중앙 고목을 지키는 사마귀(대형)
 	for c in layout["camps"]:
 		_add_camp(c[0], c[1])
@@ -241,9 +264,17 @@ func _setup_map():
 				if n != null:
 					u.cmd_gather(n)
 
-func _add_node(kind, pos):
+func _new_nid(e, nid):
+	if nid == 0:
+		nid = next_nid
+		next_nid += 1
+	e.nid = nid
+	ents[nid] = e
+
+func _add_node(kind, pos, nid = 0):
 	var n = NodeScript.new()
 	n.setup(self, kind, pos)
+	_new_nid(n, nid)
 	world.add_child(n)
 	res_nodes.append(n)
 	return n
@@ -317,9 +348,10 @@ func on_aphid_slain(n, pid):
 		if mine != null and mine.position.distance_to(n.position) < 700.0:
 			msg("진딧물 군락이 도살당했습니다")
 
-func spawn_unit(pid, kind, pos):
+func spawn_unit(pid, kind, pos, nid = 0):
 	var u = UnitScript.new()
 	u.setup(self, pid, kind, pos)
+	_new_nid(u, nid)
 	u.z_index = 5
 	if u.air:
 		u.z_index = 8
@@ -327,9 +359,10 @@ func spawn_unit(pid, kind, pos):
 	units.append(u)
 	return u
 
-func spawn_building(pid, kind, pos, finished, main):
+func spawn_building(pid, kind, pos, finished, main, nid = 0):
 	var b = BuildingScript.new()
 	b.setup(self, pid, kind, pos, finished, main)
+	_new_nid(b, nid)
 	b.z_index = 2
 	world.add_child(b)
 	buildings.append(b)
@@ -345,6 +378,7 @@ func remove_unit(u):
 			remove_unit(cu)
 	u.cargo.clear()
 	units.erase(u)
+	ents.erase(u.nid)
 	if selection.has(u):
 		selection.erase(u)
 		sel_version += 1
@@ -353,10 +387,12 @@ func remove_unit(u):
 func remove_res_node(n):
 	n.gone = true
 	res_nodes.erase(n)
+	ents.erase(n.nid)
 	n.queue_free()
 
 func remove_building(b):
 	buildings.erase(b)
+	ents.erase(b.nid)
 	if selection.has(b):
 		selection.erase(b)
 	sel_version += 1
@@ -783,22 +819,19 @@ func _mobile_cmds(b):
 	match b.mode:
 		"camp":
 			out.append({"text": "행군 준비\n%d초" % int(b.pack_time()), "tip": "건물이 이동할 수 있게 된다. 행군 중에는 생산이 느려지고 일꾼 생산·연구·자원 반납이 멈춘다",
-				"enabled": true, "call": func(): b.pack(); sel_version += 1})
+				"enabled": true, "call": act.bind("pack", [b])})
 		"packing":
 			out.append({"text": "행군 준비 중\n%d초" % int(ceil(b.mode_t)), "tip": "", "enabled": false, "call": func(): pass})
 		"march":
 			out.append({"text": "야영\n%d초" % int(b.unpack_time()), "tip": "지금 자리에 자리를 잡는다. 오른쪽 클릭으로 이동",
-				"enabled": true, "call": func():
-					if not b.unpack():
-						msg("여기에는 야영할 수 없습니다")
-					sel_version += 1})
+				"enabled": true, "call": act.bind("unpack", [b])})
 		"unpacking":
 			out.append({"text": "야영 준비 중\n%d초" % int(ceil(b.mode_t)), "tip": "", "enabled": false, "call": func(): pass})
 	if b.kind == "nest" and b.is_main:
 		out.append({"text": "군체 전체 행군", "tip": "모든 건물이 행군을 준비한다. 주 둥지를 움직이면 다른 건물도 따라온다",
-			"enabled": true, "call": pack_colony.bind(b.pid, true)})
+			"enabled": true, "call": act.bind("pack_all", [b])})
 		out.append({"text": "군체 전체 야영", "tip": "행군 중인 모든 건물이 지금 자리에 야영한다",
-			"enabled": true, "call": pack_colony.bind(b.pid, false)})
+			"enabled": true, "call": act.bind("camp_all", [b])})
 	return out
 
 # ---------- 함정턱개미 ----------
@@ -891,8 +924,12 @@ func can_place(kind, pos, pid = -1):
 	return true
 
 func _say(pid, text):
-	if pid == human_id and not autotest:
+	if autotest:
+		return
+	if pid == human_id or controlled.has(pid):
 		msg(text)
+	elif net_role == "host":
+		get_node("/root/Net").send_msg(pid, text)
 
 func start_build(pid, kind, pos, builders):
 	var p = players[pid]
@@ -1093,10 +1130,14 @@ func order_move(us, pos, attack):
 			u.cmd_move(pos + off)
 		i += 1
 
+# 이 화면의 사람이 조종할 수 있는 pid 인가(자기 자신 + 접속이 끊긴 아군)
+func controls(pid):
+	return pid == human_id or controlled.has(pid)
+
 func sel_units():
 	var out = []
 	for e in selection:
-		if is_instance_valid(e) and e is UnitScript and e.pid == human_id and not e.dead:
+		if is_instance_valid(e) and e is UnitScript and controls(e.pid) and not e.dead:
 			out.append(e)
 	return out
 
@@ -1141,7 +1182,8 @@ func get_commands():
 	var cmds = []
 	var p = players[human_id]
 	var b = sel_building()
-	if b != null and b.pid == human_id:
+	if b != null and controls(b.pid):
+		p = players[b.pid]
 		if not b.built:
 			return cmds
 		for id in b.d["produces"]:
@@ -1162,30 +1204,30 @@ func get_commands():
 			if d.has("needs") and not p.has(d["needs"]):
 				ok = false
 				tip = "%s 연구 필요\n" % Data.RESEARCH[d["needs"]]["name"] + tip
-			cmds.append({"text": txt, "tip": tip, "enabled": ok, "call": enqueue_unit.bind(b, id)})
+			cmds.append({"text": txt, "tip": tip, "enabled": ok, "call": act.bind("enqueue", [b, id])})
 		if b.garden_slots() > 0:
-			cmds.append({"text": "정원사 추가\n%d / %d" % [b.gardeners.size(), b.garden_slots()],
+			cmds.append({"text": "정원사 추가\n%d / %d" % [b.garden_count(), b.garden_slots()],
 				"tip": "가장 가까운 일꾼을 균류 정원에 넣는다. 정원사 1기가 분당 재료 45 를 식량 %d 으로 바꾼다" % int(45 * p.garden_ratio()),
-				"enabled": b.gardeners.size() < b.garden_slots(), "call": _add_gardener.bind(b)})
-			cmds.append({"text": "정원사 빼기", "tip": "정원사 1기를 밖으로 내보낸다", "enabled": b.gardeners.size() > 0,
-				"call": func(): b.release_gardener(); sel_version += 1})
+				"enabled": b.garden_count() < b.garden_slots(), "call": act.bind("garden_add", [b])})
+			cmds.append({"text": "정원사 빼기", "tip": "정원사 1기를 밖으로 내보낸다", "enabled": b.garden_count() > 0,
+				"call": act.bind("garden_out", [b])})
 		if b.kind == "nest" and b.is_main and p.has("war_fungus"):
 			var txt2 = "포자 갑옷\n식량 %d" % Data.WAR_FUNGUS_FOOD
 			if p.war_cd > 0.0:
 				txt2 = "포자 갑옷\n%d초" % int(ceil(p.war_cd))
 			cmds.append({"text": txt2, "tip": "전 병력이 피해 %d 을 흡수하는 갑옷을 %d초 동안 두른다" % [int(Data.WAR_FUNGUS_SHIELD), int(Data.WAR_FUNGUS_TIME)],
-				"enabled": p.war_cd <= 0.0, "call": use_war_fungus.bind(b.pid)})
+				"enabled": p.war_cd <= 0.0, "call": act.bind("fungus", [b])})
 		if b.kind == "nest" and b.is_main and b.tier < 3 and b.upgrade_t < 0.0:
 			var up = Data.NEST_UPGRADE[b.tier + 1]
 			cmds.append({"text": "둥지 등급 상승\n재료 %d" % up["mat"], "tip": "상위 유닛과 인구 한도 해금",
-				"enabled": true, "call": start_upgrade.bind(b)})
+				"enabled": true, "call": act.bind("upgrade", [b])})
 		if b.kind == "lab":
 			for tab in [["body", "신체 진화"], ["colony", "군체 진화"], ["unique", "고유 진화"]]:
 				var label = tab[1]
 				if lab_tab == tab[0]:
 					label = "▶ " + label
 				cmds.append({"text": label, "tip": "", "enabled": true, "call": _set_lab_tab.bind(tab[0])})
-			cmds.append({"text": "마지막 예약 취소", "tip": "전액 환불", "enabled": b.queue.size() > 0, "call": cancel_last.bind(b)})
+			cmds.append({"text": "마지막 예약 취소", "tip": "전액 환불", "enabled": b.queue.size() > 0, "call": act.bind("cancel", [b])})
 			var mc = _mobile_cmds(b)
 			if mc.size() > 0:
 				cmds.append(mc[0])
@@ -1207,10 +1249,10 @@ func get_commands():
 				var tip = "%s (%d초)" % [r["tip"], int(r["time"])]
 				if st != "ok":
 					tip = research_reason(st, id) + "\n" + tip
-				cmds.append({"text": t2, "tip": tip, "enabled": st == "ok", "call": enqueue_research.bind(b, id)})
+				cmds.append({"text": t2, "tip": tip, "enabled": st == "ok", "call": act.bind("research", [b, id])})
 			return cmds
 		if b.queue.size() > 0:
-			cmds.append({"text": "마지막 예약 취소", "tip": "전액 환불", "enabled": true, "call": cancel_last.bind(b)})
+			cmds.append({"text": "마지막 예약 취소", "tip": "전액 환불", "enabled": true, "call": act.bind("cancel", [b])})
 		cmds.append_array(_mobile_cmds(b))
 		return cmds
 	var has_worker = false
@@ -1242,12 +1284,12 @@ func get_commands():
 		if ready.is_empty():
 			txt3 += "\n%d초" % int(ceil(lures.map(func(x): return x.lure_cd).min()))
 		cmds.append({"text": txt3, "tip": "주변 %d 안의 적이 %d초 동안 유인병을 공격한다. 같은 적은 %d초 동안 다시 끌리지 않는다" % [int(Data.LURE_RADIUS), int(Data.LURE_TIME), int(Data.LURE_IMMUNE)],
-			"enabled": not ready.is_empty(), "call": func(): use_lure(ready[0]); sel_version += 1})
+			"enabled": not ready.is_empty(), "call": act.bind("lure", [ready[0]])})
 	if has_cargo:
-		cmds.append({"text": "하선", "tip": "타고 있는 유닛을 주변 땅에 내린다", "enabled": true, "call": _unload})
+		cmds.append({"text": "하선", "tip": "타고 있는 유닛을 주변 땅에 내린다", "enabled": true, "call": func(): act("unload", [sel_units()])})
 	elif has_root:
 		cmds.append({"text": "거점화 / 해제", "tip": "이동 불가, 받는 피해 60% 감소",
-			"enabled": true, "call": _toggle_root})
+			"enabled": true, "call": func(): act("root", [sel_units()])})
 	return cmds
 
 func _unload():
@@ -1353,10 +1395,14 @@ func _unhandled_input(ev):
 			if ev.pressed:
 				if build_mode != "":
 					var workers = sel_units().filter(func(u): return u.is_worker)
-					if start_build(human_id, build_mode, wp, workers) != null:
+					var owner = workers[0].pid if workers.size() > 0 else human_id
+					if can_place(build_mode, wp, owner):
+						act("build", [build_mode, wp, workers])
 						build_mode = ""
+					else:
+						msg("그 자리에는 지을 수 없습니다")
 				elif amove_armed:
-					order_move(sel_units(), wp, true)
+					act("move", [sel_units(), wp, true])
 					amove_armed = false
 				else:
 					dragging = true
@@ -1377,8 +1423,7 @@ func _unhandled_input(ev):
 			amove_armed = true
 			build_mode = ""
 		elif ev.keycode == KEY_S and has_units:
-			for u in sel_units():
-				u.cmd_stop()
+			act("stop", [sel_units()])
 		elif ev.keycode == KEY_ESCAPE:
 			if build_mode != "" or amove_armed:
 				build_mode = ""
@@ -1397,7 +1442,7 @@ func _finish_drag(wp):
 	var rect = Rect2(drag_from, wp - drag_from).abs()
 	if rect.size.length() < 8.0:
 		var e = _entity_at(wp)
-		if e != null and (e is UnitScript or e is BuildingScript) and e.pid == human_id:
+		if e != null and (e is UnitScript or e is BuildingScript) and controls(e.pid):
 			set_selection([e])
 		else:
 			set_selection([])
@@ -1405,7 +1450,7 @@ func _finish_drag(wp):
 	var picked = []
 	var any_army = false
 	for u in units:
-		if u.pid == human_id and not u.carried and rect.has_point(u.position):
+		if controls(u.pid) and not u.carried and rect.has_point(u.position):
 			picked.append(u)
 			if not u.is_worker:
 				any_army = true
@@ -1416,20 +1461,25 @@ func _finish_drag(wp):
 func _right_click(wp):
 	var e = _entity_at(wp)
 	var b = sel_building()
-	if b != null and b.pid == human_id and (b.mode == "march" or b.mode == "packing"):
+	if b != null and controls(b.pid) and b.mode == "camp":
+		msg("집결 지점 지정")
+	act("rclick", [sel_units(), wp, e, b])
+
+# 오른쪽 클릭의 실제 처리(방장·혼자 하기에서 실행). pid 는 명령을 내린 사람
+func _do_rclick(pid, us, wp, e, b):
+	if b != null and _owns(pid, b) and (b.mode == "march" or b.mode == "packing"):
 		order_march(b, wp)
 		return
-	if b != null and b.pid == human_id:
+	if b != null and _owns(pid, b):
 		b.rally_pos = wp
 		b.rally_node = null
 		if e != null and e is NodeScript:
 			b.rally_node = e
-		msg("집결 지점 지정")
 		return
-	var us = sel_units()
 	if us.is_empty():
 		return
-	if e != null and (e is UnitScript or e is BuildingScript) and is_enemy(e.pid, human_id):
+	var me = us[0].pid
+	if e != null and (e is UnitScript or e is BuildingScript) and is_enemy(e.pid, me):
 		for u in us:
 			u.cmd_attack(e)
 	elif e != null and e is NodeScript:
@@ -1442,15 +1492,15 @@ func _right_click(wp):
 			else:
 				rest.append(u)
 		order_move(rest, wp, false)
-	elif e != null and e is UnitScript and e.pid == human_id and e.kind == "raft":
+	elif e != null and e is UnitScript and e.pid == me and e.kind == "raft":
 		for u in us:
 			if u != e:
 				u.cmd_board(e)
-	elif e != null and e is BuildingScript and e.pid == human_id and e.built and e.garden_slots() > 0 and us.any(func(x): return x.is_worker):
+	elif e != null and e is BuildingScript and e.pid == me and e.built and e.garden_slots() > 0 and us.any(func(x): return x.is_worker):
 		for u in us:
 			if u.is_worker:
 				u.cmd_garden(e)
-	elif e != null and e is BuildingScript and e.pid == human_id and not e.built:
+	elif e != null and e is BuildingScript and e.pid == me and not e.built:
 		for u in us:
 			if u.is_worker:
 				u.cmd_build(e)
@@ -1514,9 +1564,19 @@ func _update_fog():
 			n.visible = false
 
 func _physics_process(delta):
+	if net_role == "client":
+		# 참가자: 계산하지 않고 방장이 보낸 상태를 그린다
+		_rebuild_grid()
+		_update_territory(delta)
+		return
 	if game_over:
 		return
 	elapsed += delta
+	if net_role == "host":
+		snap_t -= delta
+		if snap_t <= 0.0:
+			snap_t = get_node("/root/Net").SNAP_EVERY
+			get_node("/root/Net").send_snapshot(build_snapshot())
 	_rebuild_grid()
 	for p in players:
 		p.pop_used = 0.0
@@ -1585,6 +1645,12 @@ func _check_end():
 	var over = teams.size() <= 1
 	# 사람이 탈락하면 그 사람에게는 판이 끝난다(관전 없음)
 	if not autotest and not players[human_id].alive:
+		if net_role == "host" and not over:
+			# 방장은 다른 사람들의 판을 계속 계산해야 하므로 결과만 보여 주고 멈추지 않는다
+			if not lost_shown:
+				lost_shown = true
+				hud.show_game_over(false)
+			return
 		over = true
 	if not over:
 		return
@@ -1674,3 +1740,380 @@ func _draw_overlay():
 	if b != null and b.pid == human_id and b.built and b.camped() and b.d["produces"].size() > 0:
 		overlay.draw_line(b.position, b.rally_pos, Color(1, 1, 1, 0.3), 1.0)
 		overlay.draw_circle(b.rally_pos, 4.0, Color(1, 1, 1, 0.6))
+
+
+# ---------- 명령 통로 ----------
+# 사람의 모든 명령은 여기를 거친다. 참가자 화면에서는 방장에게 보내고, 방장·혼자 하기에서는 바로 실행한다.
+
+func act(name, args = []):
+	if net_role == "client":
+		get_node("/root/Net").send_cmd(name, _encode(args))
+		return
+	_do_act(human_id, name, args)
+	sel_version += 1
+
+func _encode(v):
+	if v is Array:
+		var out = []
+		for x in v:
+			out.append(_encode(x))
+		return out
+	if v is Object and v != null and is_instance_valid(v) and v.get("nid") != null:
+		return {"e": v.nid}
+	return v
+
+func _decode(v):
+	if v is Array:
+		var out = []
+		for x in v:
+			var d = _decode(x)
+			if d != null or not (x is Dictionary):
+				out.append(d)
+		return out
+	if v is Dictionary and v.has("e"):
+		var e = ents.get(int(v["e"]))
+		return e if e != null and is_instance_valid(e) and not e.get("dead") else null
+	return v
+
+# pid 가 이 개체를 조종할 수 있는가(자기 것 + 접속이 끊겨 넘겨받은 아군 것)
+func _owns(pid, e):
+	return e != null and is_instance_valid(e) and (e.pid == pid or transfers.get(e.pid, -1) == pid or (pid == human_id and controlled.has(e.pid)))
+
+func _mine(pid, arr):
+	var out = []
+	for u in arr:
+		if u is UnitScript and _owns(pid, u) and not u.dead:
+			out.append(u)
+	return out
+
+# 방장: 참가자가 보낸 명령
+func net_command(pid, name, args):
+	if players[pid].alive:
+		_do_act(pid, name, _decode(args))
+
+func _do_act(pid, name, a):
+	match name:
+		"move":
+			order_move(_mine(pid, a[0]), a[1], a[2])
+		"stop":
+			for u in _mine(pid, a[0]):
+				u.cmd_stop()
+		"rclick":
+			var b = a[3] if a.size() > 3 and _owns(pid, a[3]) else null
+			_do_rclick(pid, _mine(pid, a[0]), a[1], a[2], b)
+		"build":
+			var ws = _mine(pid, a[2])
+			var owner = ws[0].pid if ws.size() > 0 else pid
+			start_build(owner, a[0], a[1], ws)
+		"enqueue":
+			if _owns(pid, a[0]):
+				enqueue_unit(a[0], a[1])
+		"research":
+			if _owns(pid, a[0]):
+				enqueue_research(a[0], a[1])
+		"upgrade":
+			if _owns(pid, a[0]):
+				start_upgrade(a[0])
+		"cancel":
+			if _owns(pid, a[0]):
+				cancel_last(a[0])
+		"root":
+			var us = _mine(pid, a[0])
+			var any_free = us.any(func(u): return u.d.get("root", false) and not u.rooted)
+			for u in us:
+				if u.d.get("root", false) and u.rooted != any_free:
+					u.toggle_root()
+		"unload":
+			for u in _mine(pid, a[0]):
+				if u.cargo.size() > 0 and not u.unload():
+					_say(pid, "땅 가까이에서만 내릴 수 있습니다")
+		"garden_add":
+			if _owns(pid, a[0]):
+				_add_gardener(a[0])
+		"garden_out":
+			if _owns(pid, a[0]):
+				a[0].release_gardener()
+		"fungus":
+			if _owns(pid, a[0]):
+				use_war_fungus(a[0].pid)
+		"lure":
+			var us = _mine(pid, a)
+			if us.size() > 0:
+				use_lure(us[0])
+		"pack":
+			if _owns(pid, a[0]):
+				a[0].pack()
+		"unpack":
+			if _owns(pid, a[0]) and not a[0].unpack():
+				_say(pid, "여기에는 야영할 수 없습니다")
+		"pack_all":
+			if _owns(pid, a[0]):
+				pack_colony(a[0].pid, true)
+		"camp_all":
+			if _owns(pid, a[0]):
+				pack_colony(a[0].pid, false)
+
+# ---------- 접속 종료와 재접속 (방장) ----------
+
+func on_player_left(pid):
+	if not players[pid].alive:
+		return
+	# 팀전에서 접속 중인 아군 사람이 있으면 그 아군이 조종한다. 없으면 인공지능이 이어받는다
+	var net = get_node("/root/Net")
+	var ally = -1
+	if match_mode == "team":
+		for q in players:
+			if q.active and q.alive and q.id != pid and not q.is_ai and not is_enemy(q.id, pid):
+				if q.id == human_id or net.pid_peer.has(q.id):
+					ally = q.id
+					break
+	if ally >= 0:
+		transfers[pid] = ally
+		if ally == human_id:
+			controlled[pid] = true
+		_announce("%s 의 접속이 끊겨 %s 이(가) 대신 조종합니다" % [players[pid].label, players[ally].label])
+	else:
+		players[pid].is_ai = true
+		var ai = AIScript.new()
+		ai.setup(self, pid)
+		ais.append(ai)
+		_announce("%s 의 접속이 끊겨 인공지능이 대신합니다" % players[pid].label)
+
+func on_player_rejoined(pid):
+	transfers.erase(pid)
+	controlled.erase(pid)
+	ais = ais.filter(func(ai): return ai.pid != pid)
+	players[pid].is_ai = false
+	_announce("%s 이(가) 다시 들어왔습니다" % players[pid].label)
+
+func _announce(text):
+	msg(text)
+	var net = get_node_or_null("/root/Net")
+	if net != null and net.is_host():
+		for pid in net.pid_peer:
+			net.send_msg(pid, text)
+
+# ---------- 상태 전송 ----------
+
+const U_FIELDS = 12
+const B_FIELDS = 18
+const N_FIELDS = 9
+var _ukinds = []
+var _bkinds = ["nest", "combat", "defense", "special", "lab", "tent"]
+var _nkinds = []
+const MODES = ["camp", "packing", "march", "unpacking"]
+
+func _kind_tables():
+	if _ukinds.is_empty():
+		_ukinds = Data.UNITS.keys() + Data.NEUTRALS.keys()
+		_nkinds = Data.NODES.keys()
+
+func build_snapshot():
+	_kind_tables()
+	var uf = PackedFloat32Array()
+	for u in units:
+		var flags = 0
+		if u.rooted: flags |= 1
+		if u.stealthed: flags |= 2
+		if u.air: flags |= 4
+		if u.carried: flags |= 8
+		if u.carry > 0.0 and u.carry_res == "food": flags |= 16
+		if u.carry > 0.0 and u.carry_res == "mat": flags |= 32
+		if u.stun_t > 0.0: flags |= 64
+		if u.snap_ready(): flags |= 128
+		if u.alarm_stacks > 0: flags |= 256
+		if u.pinned_t > 0.0: flags |= 512
+		var extra = 0.0
+		if u.kind == "raft":
+			extra = u.cargo.size()
+		elif u.d.get("lure", false):
+			extra = max(0.0, u.lure_cd)
+		elif u.d.get("bridge", false):
+			extra = u.bridge_r
+		uf.append_array([u.nid, _ukinds.find(u.kind), u.pid, u.position.x, u.position.y, u.facing,
+			u.hp, u.max_hp, flags, extra, u.shield, u.venom_stacks])
+	var bf = PackedFloat32Array()
+	var queues = {}
+	for b in buildings:
+		var flags = 0
+		if b.built: flags |= 1
+		if b.is_main: flags |= 2
+		if b.stealthed: flags |= 4
+		if b.net_ok: flags |= 8
+		bf.append_array([b.nid, _bkinds.find(b.kind), b.pid, b.position.x, b.position.y, b.hp, b.max_hp, flags,
+			b.tier, MODES.find(b.mode), b.mode_t, b.build_progress, b.upgrade_t, b.gardeners.size(), b.venom_stacks,
+			b.rally_pos.x, b.rally_pos.y, b.pop_cost])
+		if b.queue.size() > 0:
+			var q = []
+			for it in b.queue:
+				q.append([it["type"], it["id"], it["progress"], it["time"], it["started"]])
+			queues[b.nid] = q
+	var nf = PackedFloat32Array()
+	for n in res_nodes:
+		var flags = 0
+		if n.dead: flags |= 1
+		nf.append_array([n.nid, _nkinds.find(n.kind), n.position.x, n.position.y, n.amount, flags, n.dormant, n.decay, n.hp])
+	var pl = []
+	for p in players:
+		pl.append([p.food, p.mat, p.pop_used, p.pop_cap, p.alive, p.succession, p.war_cd, p.research.keys(), p.is_ai])
+	var zs = PackedFloat32Array()
+	for z in zones:
+		zs.append_array([z[0].x, z[0].y, z[3], z[1]])
+	for z in spore_zones:
+		zs.append_array([z[0].x, z[0].y, Data.SPORE_ZONE_RADIUS, z[1]])
+	var bridged = PackedInt32Array()
+	for i in terrain.bridged.size():
+		if terrain.bridged[i] > 0:
+			bridged.append(i)
+	return {"t": elapsed, "u": uf, "b": bf, "q": queues, "n": nf, "p": pl, "z": zs, "br": bridged,
+		"over": game_over, "win": winner, "tr": transfers}
+
+# 참가자: 방장이 보낸 상태대로 개체를 만들고, 고치고, 지운다
+func apply_snapshot(s):
+	_kind_tables()
+	elapsed = s["t"]
+	var seen = {}
+	var uf = s["u"]
+	for i in range(0, uf.size(), U_FIELDS):
+		var nid = int(uf[i])
+		seen[nid] = true
+		var kind = _ukinds[int(uf[i + 1])]
+		var pid = int(uf[i + 2])
+		var pos = Vector2(uf[i + 3], uf[i + 4])
+		var u = ents.get(nid)
+		if u == null or not is_instance_valid(u):
+			u = spawn_unit(pid, kind, pos, nid)
+		u.net_pos = pos
+		u.facing = uf[i + 5]
+		u.hp = uf[i + 6]
+		u.max_hp = uf[i + 7]
+		var f = int(uf[i + 8])
+		u.rooted = (f & 1) != 0
+		u.stealthed = (f & 2) != 0
+		if u.air != ((f & 4) != 0):
+			u.air = (f & 4) != 0
+			u.z_index = 8 if u.air else 5
+		u.carried = (f & 8) != 0
+		u.carry = 10.0 if (f & 48) != 0 else 0.0
+		u.carry_res = "food" if (f & 16) != 0 else "mat"
+		u.stun_t = 1.0 if (f & 64) != 0 else 0.0
+		u.snap_t = 999.0 if (f & 128) != 0 else 0.0
+		u.alarm_stacks = 1 if (f & 256) != 0 else 0
+		u.pinned_t = 1.0 if (f & 512) != 0 else 0.0
+		u.net_extra = uf[i + 9]
+		if u.d.get("lure", false):
+			u.lure_cd = uf[i + 9]
+		if u.d.get("bridge", false):
+			u.bridge_r = uf[i + 9]
+		u.shield = uf[i + 10]
+		u.venom_stacks = int(uf[i + 11])
+	var bf = s["b"]
+	var q = s["q"]
+	for i in range(0, bf.size(), B_FIELDS):
+		var nid = int(bf[i])
+		seen[nid] = true
+		var kind = _bkinds[int(bf[i + 1])]
+		var pid = int(bf[i + 2])
+		var pos = Vector2(bf[i + 3], bf[i + 4])
+		var f = int(bf[i + 7])
+		var b = ents.get(nid)
+		if b == null or not is_instance_valid(b):
+			b = spawn_building(pid, kind, pos, (f & 1) != 0, (f & 2) != 0, nid)
+		b.position = pos
+		b.hp = bf[i + 5]
+		b.max_hp = bf[i + 6]
+		b.built = (f & 1) != 0
+		b.is_main = (f & 2) != 0
+		b.stealthed = (f & 4) != 0
+		b.net_ok = (f & 8) != 0
+		b.tier = int(bf[i + 8])
+		b.mode = MODES[int(bf[i + 9])]
+		b.mode_t = bf[i + 10]
+		b.build_progress = bf[i + 11]
+		b.upgrade_t = bf[i + 12]
+		b.net_gardeners = int(bf[i + 13])
+		b.venom_stacks = int(bf[i + 14])
+		b.rally_pos = Vector2(bf[i + 15], bf[i + 16])
+		b.pop_cost = bf[i + 17]
+		b.queue = []
+		for it in q.get(nid, []):
+			b.queue.append({"type": it[0], "id": it[1], "progress": it[2], "time": it[3], "started": it[4]})
+	var nf = s["n"]
+	for i in range(0, nf.size(), N_FIELDS):
+		var nid = int(nf[i])
+		seen[nid] = true
+		var n = ents.get(nid)
+		if n == null or not is_instance_valid(n):
+			n = _add_node(_nkinds[int(nf[i + 1])], Vector2(nf[i + 2], nf[i + 3]), nid)
+		n.amount = nf[i + 4]
+		if n.kind == "corpse":
+			n.set_amount(n.amount)
+		n.dead = (int(nf[i + 5]) & 1) != 0
+		n.dormant = nf[i + 6]
+		n.decay = nf[i + 7]
+		n.hp = nf[i + 8]
+	for nid in ents.keys():
+		if not seen.has(nid):
+			var e = ents[nid]
+			ents.erase(nid)
+			if is_instance_valid(e):
+				units.erase(e)
+				buildings.erase(e)
+				res_nodes.erase(e)
+				if selection.has(e):
+					selection.erase(e)
+					sel_version += 1
+				e.queue_free()
+	for i in s["p"].size():
+		var d = s["p"][i]
+		var p = players[i]
+		p.food = d[0]
+		p.mat = d[1]
+		p.pop_used = d[2]
+		p.pop_cap = d[3]
+		p.alive = d[4]
+		p.succession = d[5]
+		p.war_cd = d[6]
+		var r = {}
+		for id in d[7]:
+			r[id] = true
+		p.research = r
+		p.is_ai = d[8]
+	zones = []
+	spore_zones = []
+	var zs = s["z"]
+	for i in range(0, zs.size(), 4):
+		zones.append([Vector2(zs[i], zs[i + 1]), zs[i + 3], -1, zs[i + 2], 0.0])
+	var br = {}
+	for i in s["br"]:
+		br[i] = true
+	for i in terrain.bridged.size():
+		var want = 1 if br.has(i) else 0
+		if terrain.bridged[i] != want:
+			terrain.bridged[i] = want
+	# 첫 상태를 받으면 카메라를 내 둥지로
+	if not camera_set:
+		var m = main_nest(human_id)
+		if m != null:
+			camera.position = m.position
+			camera_set = true
+	controlled.clear()
+	for pid in s["tr"]:
+		if s["tr"][pid] == human_id:
+			controlled[int(pid)] = true
+	# 결과
+	if not lost_shown and not players[human_id].alive:
+		lost_shown = true
+		hud.show_game_over(false)
+	elif s["over"] and not game_over:
+		game_over = true
+		hud.show_game_over(players[human_id].alive and s["win"] == players[human_id].team)
+
+# 참가자: 방장과의 연결이 끊기면 알리고 방 화면으로 돌아간다
+func _on_net_left(reason):
+	if not is_inside_tree():
+		return
+	msg(reason + " — 방 화면으로 돌아갑니다")
+	await get_tree().create_timer(3.0).timeout
+	if is_inside_tree():
+		get_tree().change_scene_to_file("res://scenes/lobby.tscn")

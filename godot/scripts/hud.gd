@@ -108,11 +108,17 @@ func show_game_over(won):
 	b.size = Vector2(140, 44)
 	b.pressed.connect(func(): game.get_tree().reload_current_scene())
 	over_panel.add_child(b)
+	b.visible = game.net_role == "offline"
 	var b2 = Button.new()
 	b2.text = "방으로"
 	b2.position = Vector2(190, 95)
 	b2.size = Vector2(140, 44)
-	b2.pressed.connect(func(): game.get_tree().change_scene_to_file("res://scenes/lobby.tscn"))
+	b2.pressed.connect(func():
+		# 온라인: 방을 나간다(방장이 나가면 판이 끝난다)
+		var net = game.get_node_or_null("/root/Net")
+		if net != null and net.is_online():
+			net.leave()
+		game.get_tree().change_scene_to_file("res://scenes/lobby.tscn"))
 	over_panel.add_child(b2)
 
 func press_button(i):
@@ -208,7 +214,7 @@ func _info():
 	var b = game.sel_building()
 	if b != null:
 		var t = "%s\n체력 %d / %d" % [b.display_name(), int(b.hp), int(b.max_hp)]
-		if b.pid != game.human_id:
+		if not game.controls(b.pid):
 			return t
 		if b.mode != "camp":
 			t += "\n" + {"packing": "행군 준비 중", "march": "행군 중 (오른쪽 클릭: 이동)", "unpacking": "야영 준비 중"}[b.mode]

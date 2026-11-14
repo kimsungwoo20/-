@@ -1,0 +1,8 @@
+{
+  "name": "ant-rts-signaling",
+  "version": "1.0.0",
+  "description": "개미 RTS 온라인 대전용 연결 중개 서버(브라우저끼리 직접 연결하도록 연결 정보만 전달한다)",
+  "main": "signaling.js",
+  "scripts": { "start": "node signaling.js" },
+  "dependencies": { "ws": "8.18.0" }
+}

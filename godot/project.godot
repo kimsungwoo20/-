@@ -7,6 +7,10 @@ config/name="Ant RTS"
 run/main_scene="res://scenes/lobby.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
 
+[autoload]
+
+Net="*res://scripts/net.gd"
+
 [display]
 
 window/size/viewport_width=1280

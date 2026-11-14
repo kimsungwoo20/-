@@ -64,6 +64,10 @@ var escort_near = false  # 수호병: 행군 중인 아군 건물 근처
 var bridge_r = 0.0       # 다리 개미가 이어 놓은 다리의 반경(0 이면 없음)
 var hook_t = 0.0         # 갈고리 턱에 걸려 느려진 남은 시간
 var fac = {}             # 소속 진영 데이터
+# 온라인
+var nid = 0              # 고유 번호(방장과 참가자가 같은 개체를 가리킬 때 쓴다)
+var net_pos = Vector2.ZERO
+var net_extra = 0.0
 var dead = false
 var selected = false
 var facing = 0.0
@@ -330,6 +334,15 @@ func cmd_stop():
 # ---------- 매 틱 ----------
 
 func _physics_process(delta):
+	if game.net_role == "client":
+		# 참가자 화면: 방장이 보낸 위치로 부드럽게 따라간다
+		visible = visible and not carried
+		if position.distance_to(net_pos) > 200.0:
+			position = net_pos
+		else:
+			position = position.lerp(net_pos, min(1.0, delta * 12.0))
+		queue_redraw()
+		return
 	if dead or carried:
 		return
 	if cargo.size() > 0:
@@ -922,7 +935,7 @@ func _draw():
 	if kind == "raft":
 		draw_circle(Vector2.ZERO, r, Color(0.45, 0.3, 0.15))
 		draw_arc(Vector2.ZERO, r, 0.0, TAU, 20, c, 2.0)
-		for i in cargo.size():
+		for i in max(cargo.size(), int(net_extra)):
 			draw_circle(Vector2(r * 0.55, 0).rotated(i * TAU / 8.0), 2.0, c.lightened(0.3))
 	if carry > 0.0:
 		var cc = Data.FOOD_COLOR

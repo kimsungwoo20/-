@@ -18,6 +18,7 @@ var max_hp = 0.0
 var slain_t = 0.0      # 도살 후 재생까지 남은 시간
 var decay = 0.0        # 사체가 썩어 없어지기까지 남은 시간
 var calm = 0.0         # 마지막으로 공격받은 뒤 지난 시간
+var nid = 0
 
 func setup(g, k, pos):
 	game = g
@@ -97,6 +98,8 @@ func harvest(n):
 	return got
 
 func _physics_process(delta):
+	if game.net_role == "client":
+		return
 	if dead:
 		slain_t -= delta
 		if slain_t <= 0.0:
@@ -114,7 +117,7 @@ func _physics_process(delta):
 			return
 
 func _process(delta):
-	if d["regen"] > 0.0:
+	if d["regen"] > 0.0 and game.net_role != "client":
 		if dormant > 0.0:
 			dormant -= delta
 			if dormant <= 0.0:
