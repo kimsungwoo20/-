@@ -40,6 +40,9 @@ func setup(g, p, k, pos, finished, main):
 	radius = d["radius"]
 	position = pos
 	is_main = main
+	# 함정턱개미: 본진 외 건물은 은폐
+	if kind != "nest" and Data.FACTIONS.get(g.players[p].faction, {}).get("hidden_buildings", false):
+		stealthed = true
 	built = finished
 	if built:
 		hp = max_hp

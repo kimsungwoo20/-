@@ -77,9 +77,17 @@ func speed_mult(air):
 
 func carry_amount(res = "food"):
 	var n = Data.CARRY + 2.0 * level("carry")
-	if res == "mat" and Data.FACTIONS.has(faction):
-		n += Data.FACTIONS[faction]["mat_carry_bonus"]
+	if Data.FACTIONS.has(faction):
+		if res == "mat":
+			n += Data.FACTIONS[faction]["mat_carry_bonus"]
+		n += Data.FACTIONS[faction].get("carry_bonus", 0.0)
 	return n
+
+# 유닛 식량 비용(함정턱개미 일꾼은 75)
+func unit_food(kind):
+	if kind == "worker" and Data.FACTIONS.has(faction):
+		return Data.FACTIONS[faction].get("worker_food", Data.UNITS["worker"]["food"])
+	return Data.UNITS[kind]["food"]
 
 func garden_ratio():
 	return Data.GARDEN_RATIO_HIGH if research.has("high_yield") else Data.GARDEN_RATIO

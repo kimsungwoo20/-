@@ -430,7 +430,7 @@ func find_enemy(pos, pid, r, hits_air = true):
 	var best = null
 	var bd = r
 	for b in buildings:
-		if b.pid != pid and not b.dead and pid != Data.NEUTRAL_ID:
+		if b.pid != pid and not b.dead and pid != Data.NEUTRAL_ID and not (b.stealthed and not is_detected(b, pid)):
 			var dd = b.position.distance_to(pos) - b.radius
 			if dd <= bd:
 				bd = dd
@@ -633,6 +633,72 @@ func _draw_territory():
 			terr_layer.draw_circle(n["pos"], n["r"], Color(c.r, c.g, c.b, 0.06))
 			terr_layer.draw_arc(n["pos"], n["r"], 0.0, TAU, 64, Color(c.r, c.g, c.b, 0.35), 1.5)
 
+# ---------- 함정턱개미 ----------
+
+func near_own_building(pos, pid, r):
+	for b in buildings:
+		if b.pid == pid and b.built and b.position.distance_to(pos) <= r + b.radius:
+			return true
+	return false
+
+# 고독한 사냥꾼: 주변 아군 전투 유닛이 적을수록 강해진다
+func lone_factor(u):
+	if not players[u.pid].has("lone_hunter") or u.is_worker or not u.can_fight:
+		return 1.0
+	var n = 0
+	for o in query_units(u.position, Data.LONE_RADIUS):
+		if o != u and o.pid == u.pid and o.can_fight and not o.is_worker:
+			n += 1
+	return 1.0 + max(0.0, Data.LONE_BONUS - 0.1 * n)
+
+# 대왕 포식자: 대상 뒤로 이어지는 직선 위의 적에게 피해
+func snap_line(u, tpos, dmg, main_target):
+	var dir = (tpos - u.position).normalized()
+	var a = tpos
+	var b = tpos + dir * Data.KING_LINE
+	for o in query_units(tpos, Data.KING_LINE + 20.0):
+		if o == main_target or not is_hostile_target(o, u.pid) or o.air:
+			continue
+		var q = Geometry2D.get_closest_point_to_segment(o.position, a, b)
+		if q.distance_to(o.position) <= Data.KING_LINE_WIDTH + o.radius:
+			o.take_damage(dmg, u)
+
+# 사냥 무리: 짧은 시간 안에 가까이서 턱 타격이 3번 이상 나오면 충격파
+var pack_log = []        # [시각, 위치, pid]
+func pack_snap(u):
+	pack_log = pack_log.filter(func(e): return elapsed - e[0] <= Data.PACK_WINDOW)
+	pack_log.append([elapsed, u.position, u.pid])
+	var near = pack_log.filter(func(e): return e[2] == u.pid and e[1].distance_to(u.position) <= Data.PACK_RADIUS)
+	if near.size() >= Data.PACK_COUNT:
+		var c = Vector2.ZERO
+		for e in near:
+			c += e[1]
+		c /= near.size()
+		for o in query_units(c, Data.PACK_SHOCK_RADIUS):
+			if is_hostile_target(o, u.pid):
+				o.take_damage(Data.PACK_SHOCK_DMG, u)
+		add_zone(c, 0.3, u.pid, Data.PACK_SHOCK_RADIUS, 0.0, "shock")
+		pack_log = pack_log.filter(func(e): return not near.has(e))
+		return true
+	return false
+
+# 유인병: 주변 적이 일정 시간 자신을 공격하게 만든다
+func use_lure(u):
+	if u.lure_cd > 0.0 or u.dead:
+		return false
+	u.lure_cd = Data.LURE_CD
+	var n = 0
+	for o in query_units(u.position, Data.LURE_RADIUS):
+		if o.pid != u.pid and not o.is_neutral and o.can_fight and o.immune_t <= 0.0 and o.can_hit(u):
+			o._leave()
+			o.target = u
+			o.resume_amove = false
+			o.state = UnitScript.ATTACK
+			o.immune_t = Data.LURE_IMMUNE
+			n += 1
+	add_zone(u.position, 0.4, u.pid, Data.LURE_RADIUS, 0.0, "lure")
+	return n
+
 func bdata(pid, kind):
 	return Data.faction_building(players[pid].faction, kind)
 
@@ -707,13 +773,14 @@ func enqueue_unit(b, id):
 	if d.has("needs") and not p.has(d["needs"]):
 		_say(b.pid, "%s 연구가 필요합니다" % Data.RESEARCH[d["needs"]]["name"])
 		return false
-	if not p.can_afford(d["food"], d["mat"]):
+	var food = p.unit_food(id)
+	if not p.can_afford(food, d["mat"]):
 		_say(b.pid, "자원이 부족합니다")
 		return false
-	p.pay(d["food"], d["mat"])
+	p.pay(food, d["mat"])
 	var n = p.batch(id)
 	b.queue.append({"type": "unit", "id": id, "time": d["time"], "progress": 0.0, "started": false,
-		"pop": d["pop"] / float(d["batch"]) * n, "batch": n, "food": d["food"], "mat": d["mat"]})
+		"pop": d["pop"] / float(d["batch"]) * n, "batch": n, "food": food, "mat": d["mat"]})
 	return true
 
 func enqueue_research(b, id):
@@ -910,7 +977,7 @@ func get_commands():
 			var txt = d["name"]
 			if d["batch"] > 1:
 				txt += " ×%d" % d["batch"]
-			txt += "\n식량 %d" % d["food"]
+			txt += "\n식량 %d" % p.unit_food(id)
 			if d["mat"] > 0:
 				txt += " 재료 %d" % d["mat"]
 			var n = p.batch(id)
@@ -991,6 +1058,14 @@ func get_commands():
 	for u in sel_units():
 		if u.cargo.size() > 0:
 			has_cargo = true
+	var lures = sel_units().filter(func(x): return x.d.get("lure", false))
+	if lures.size() > 0:
+		var ready = lures.filter(func(x): return x.lure_cd <= 0.0)
+		var txt3 = "경보 페로몬"
+		if ready.is_empty():
+			txt3 += "\n%d초" % int(ceil(lures.map(func(x): return x.lure_cd).min()))
+		cmds.append({"text": txt3, "tip": "주변 %d 안의 적이 %d초 동안 유인병을 공격한다. 같은 적은 %d초 동안 다시 끌리지 않는다" % [int(Data.LURE_RADIUS), int(Data.LURE_TIME), int(Data.LURE_IMMUNE)],
+			"enabled": not ready.is_empty(), "call": func(): use_lure(ready[0]); sel_version += 1})
 	if has_cargo:
 		cmds.append({"text": "하선", "tip": "타고 있는 유닛을 주변 땅에 내린다", "enabled": true, "call": _unload})
 	elif has_root:
@@ -1243,6 +1318,10 @@ func _update_fog():
 	for b in buildings:
 		if b.pid == human_id:
 			b.visible = true
+			b.modulate.a = 0.6 if b.stealthed else 1.0
+		elif b.stealthed:
+			# 은폐 건물은 감지 범위 안에서 지금 보일 때만 보인다(기억되지 않는다)
+			b.visible = fog.is_visible_at(b.position) and is_detected(b, human_id)
 		else:
 			if fog.is_visible_at(b.position):
 				b.seen = true

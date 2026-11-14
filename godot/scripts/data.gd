@@ -144,6 +144,37 @@ const UNITS = {
 	"airsentry": {"name": "날개 파수꾼", "food": 90, "mat": 80, "pop": 2.0, "time": 38.0, "tier": 2,
 		"hp": 70.0, "dmg": 9.0, "cd": 1.2, "reach": 95.0, "speed": 105.0, "radius": 7.0, "batch": 1,
 		"air": true, "acid": true},
+	# ---- 함정턱개미 ----
+	# snap: 턱 타격(충전되면 3배 피해 + 밀쳐내기)
+	"hunter": {"name": "격발병", "food": 100, "mat": 0, "pop": 2.0, "time": 25.0, "tier": 1,
+		"hp": 100.0, "dmg": 12.0, "cd": 1.0, "reach": 4.0, "speed": 90.0, "radius": 7.0, "batch": 1, "snap": true},
+	# 도약 사냥꾼: 턱 타격 후 뒤로 크게 뛰어 이탈. 뛰어올라 공중도 공격
+	"leaper": {"name": "도약 사냥꾼", "food": 150, "mat": 50, "pop": 3.0, "time": 50.0, "tier": 2,
+		"hp": 150.0, "dmg": 16.0, "cd": 1.0, "reach": 5.0, "speed": 95.0, "radius": 8.0, "batch": 1,
+		"snap": true, "leap": true, "hits_air": true},
+	# 대왕 포식자: 턱 타격이 대상 뒤로 직선 범위 피해. 고유 진화 "포식자의 왕" 필요
+	"king": {"name": "대왕 포식자", "food": 320, "mat": 200, "pop": 6.0, "time": 60.0, "tier": 3,
+		"hp": 600.0, "dmg": 30.0, "cd": 1.3, "reach": 8.0, "speed": 75.0, "radius": 13.0, "batch": 1,
+		"snap": true, "line": true, "needs": "king_unlock"},
+	# 덫지기: 거점화하면 은신. 은신 중 첫 타격 2배
+	"trapper": {"name": "덫지기", "food": 100, "mat": 0, "pop": 2.0, "time": 25.0, "tier": 1,
+		"hp": 110.0, "dmg": 10.0, "cd": 1.0, "reach": 4.0, "speed": 70.0, "radius": 7.0, "batch": 1,
+		"root": true, "ambush": true},
+	# 굴 수호자: 아군 건물 근처에서 턱 타격 충전이 빠르다
+	"guardian": {"name": "굴 수호자", "food": 180, "mat": 50, "pop": 4.0, "time": 55.0, "tier": 2,
+		"hp": 320.0, "dmg": 18.0, "cd": 1.1, "reach": 5.0, "speed": 70.0, "radius": 10.0, "batch": 1,
+		"snap": true, "guard": true},
+	# 그림자 척후: 움직여도 은신, 은신 감지
+	"shade": {"name": "그림자 척후", "food": 50, "mat": 25, "pop": 1.0, "time": 19.0, "tier": 2,
+		"hp": 40.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 115.0, "radius": 4.5, "batch": 1,
+		"sight": 260.0, "detect": 250.0, "cloak": true},
+	# 유인병: 버튼으로 주변 적을 자신에게 끌어들인다
+	"lure": {"name": "유인병", "food": 80, "mat": 30, "pop": 2.0, "time": 32.0, "tier": 2,
+		"hp": 140.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 85.0, "radius": 7.0, "batch": 1, "lure": true},
+	# 낙하 사냥꾼: 공중에서 급강하 턱 타격. 타격 후 착지해 잠시 지상 유닛이 된다
+	"diver": {"name": "낙하 사냥꾼", "food": 140, "mat": 100, "pop": 3.0, "time": 50.0, "tier": 2,
+		"hp": 110.0, "dmg": 14.0, "cd": 1.2, "reach": 6.0, "speed": 120.0, "radius": 7.0, "batch": 1,
+		"air": true, "hits_air": true, "snap": true, "dive": true},
 	# ---- 불개미 ----
 	# 보모 개미: 근처에서 아군 침병·병정개미가 죽으면 가까운 생산 건물의 진행도를 앞당긴다
 	"nurse": {"name": "보모 개미", "food": 50, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
@@ -230,7 +261,57 @@ const FACTIONS = {
 		"garden": [0, 0, 0, 0],
 		"territory": true,                 # 건물이 수관 영역을 만들고, 영역 안에만 건설 가능
 	},
+	"trap": {
+		"name": "함정턱개미",
+		"buildings": {
+			"nest": {"name": "고요한 굴", "produces": ["worker"]},
+			"combat": {"name": "사냥꾼 굴", "produces": ["hunter", "leaper", "king"]},
+			"defense": {"name": "덫지기 굴", "produces": ["trapper", "guardian"]},
+			"special": {"name": "그림자 방", "produces": ["shade", "lure", "diver"]},
+			"lab": {"name": "턱근 단련실", "produces": []},
+		},
+		"sat_nest_mult": 1.0,
+		"upkeep": UPKEEP_COMMON,
+		"mat_carry_bonus": 0.0,
+		"carry_bonus": 5.0,                # 단독 사냥꾼: 일꾼이 무엇이든 5 더 나른다
+		"worker_food": 75,                 # 일꾼이 비싸다
+		"worker_dmg": 6.0,                 # 약한 자체 전투력
+		"hidden_buildings": true,          # 본진 외 건물은 은폐(감지 범위 안에서만 보이고 공격받는다)
+		"garden": [0, 0, 0, 0],
+	},
 }
+
+# ---- 턱 타격 (함정턱개미) ----
+const SNAP_MULT = 3.0                  # 충전된 턱 타격 피해 배율
+const SNAP_CHARGE = 4.0                # 공격하지 않고 이만큼 지나면 턱 타격 충전
+const SNAP_CHARGE_GUARD = 2.0          # 굴 수호자: 아군 건물 근처에서 충전 시간
+const GUARD_RADIUS = 200.0
+const SNAP_KNOCK = 40.0                # 밀쳐내기 거리
+const SNAP_KNOCK_POWER = 80.0          # 강화 격발
+const SNAP_STUN = 1.0                  # 강화 격발: 기절 시간
+const KING_LINE = 70.0                 # 대왕 포식자: 대상 뒤로 이어지는 직선 범위 길이
+const KING_LINE_WIDTH = 22.0
+const KING_LINE_MULT = 0.6
+const LEAP_DIST = 120.0
+const LEAP_CD = 10.0
+const LEAP_CD_MASTER = 6.0
+const STEALTH_REVEAL = 3.0             # 공격하면 은신이 풀리고 이만큼 지나야 다시 숨는다
+const STILL_TIME = 1.5                 # 완전 매복: 이만큼 멈춰 있으면 은신
+const AMBUSH_MULT = 2.0                # 덫지기: 은신 중 첫 타격 배율
+const FULL_AMBUSH_MULT = 1.5           # 완전 매복: 은신 중 턱 타격 추가 배율
+const CHAIN_MAX = 2
+const LONE_RADIUS = 200.0
+const LONE_BONUS = 0.3                 # 고독한 사냥꾼: 주변 아군 0 기일 때 +30%, 1 기당 -10%p
+const PACK_WINDOW = 0.5
+const PACK_RADIUS = 150.0
+const PACK_COUNT = 3
+const PACK_SHOCK_DMG = 40.0
+const PACK_SHOCK_RADIUS = 80.0
+const LURE_RADIUS = 180.0
+const LURE_TIME = 4.0
+const LURE_CD = 20.0
+const LURE_IMMUNE = 10.0
+const DIVE_GROUND_TIME = 5.0           # 낙하 사냥꾼이 착지해 지상에 머무는 시간
 
 # ---- 수관 영역 (베짜기개미) ----
 const TERR_RADIUS = {"nest": 280.0, "combat": 220.0, "defense": 300.0, "special": 220.0, "lab": 220.0, "tent": 160.0}
@@ -379,6 +460,20 @@ const RESEARCH = {
 		"tip": "건물 체력 +30%, 연결된 영역 안 건물 초당 3 회복. 영역 밖 이동 속도 불이익 증가. 뻗어가는 수관과 동시 선택 불가", "req": "", "group": "branch", "faction": "weaver"},
 	"spreading": {"name": "[분기] 뻗어가는 수관", "cat": "unique", "line": "spreading", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
 		"tip": "일꾼이 영역 밖에도 전진 둥지(작은 영역, 생산 불가)를 지을 수 있다. 철옹성과 동시 선택 불가", "req": "", "group": "branch", "faction": "weaver"},
+	"power_snap": {"name": "강화 격발", "cat": "body", "line": "power_snap", "lvl": 1, "tier": 2, "mat": 200, "food": 100, "time": 90.0,
+		"tip": "턱 타격의 밀쳐내기 거리 2배, 밀려난 적 1초 기절", "req": "", "group": "", "faction": "trap"},
+	"full_ambush": {"name": "완전 매복", "cat": "unique", "line": "full_ambush", "lvl": 1, "tier": 2, "mat": 200, "food": 50, "time": 75.0,
+		"tip": "모든 전투 유닛이 1.5초 멈춰 있으면 은신. 은신 중 턱 타격 피해 1.5배", "req": "", "group": "", "faction": "trap"},
+	"leap_master": {"name": "턱 도약 숙련", "cat": "unique", "line": "leap_master", "lvl": 1, "tier": 2, "mat": 150, "food": 50, "time": 60.0,
+		"tip": "턱 도약으로 절벽과 물을 넘는다. 재사용 대기 10초 → 6초", "req": "", "group": "", "faction": "trap"},
+	"chain_snap": {"name": "연쇄 격발", "cat": "unique", "line": "chain_snap", "lvl": 1, "tier": 2, "mat": 150, "food": 50, "time": 60.0,
+		"tip": "턱 타격으로 적을 처치하면 즉시 재충전(연속 2회까지)", "req": "", "group": "", "faction": "trap"},
+	"king_unlock": {"name": "포식자의 왕", "cat": "unique", "line": "king_unlock", "lvl": 1, "tier": 3, "mat": 250, "food": 0, "time": 90.0,
+		"tip": "대왕 포식자 생산 가능", "req": "", "group": "", "faction": "trap"},
+	"lone_hunter": {"name": "[분기] 고독한 사냥꾼", "cat": "unique", "line": "lone_hunter", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
+		"tip": "주변 200 안에 아군이 없으면 공격력·이동 속도 +30%, 아군 1기당 -10%p. 사냥 무리와 동시 선택 불가", "req": "", "group": "branch", "faction": "trap"},
+	"pack": {"name": "[분기] 사냥 무리", "cat": "unique", "line": "pack", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
+		"tip": "0.5초 안에 3기 이상이 가까이서 턱 타격을 하면 충격파(범위 80, 피해 40). 고독한 사냥꾼과 동시 선택 불가", "req": "", "group": "branch", "faction": "trap"},
 	"tyrant_blood": {"name": "폭군의 혈통", "cat": "unique", "line": "tyrant_blood", "lvl": 1, "tier": 3, "mat": 250, "food": 0, "time": 90.0,
 		"tip": "폭군 대병 생산 가능", "req": "", "group": "", "faction": "fire"},
 	"wave": {"name": "[분기] 끝없는 물결", "cat": "unique", "line": "wave", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,

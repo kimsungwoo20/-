@@ -46,6 +46,19 @@ var terr = -1
 var slow = 1.0           # 적 비단 장막에 의한 감속 배율
 var pinned_t = 0.0       # 고정병에게 물려 이동 불가인 남은 시간
 var pull_cd = 0.0
+# 함정턱개미
+var snap_t = 999.0       # 마지막 공격 뒤 지난 시간. 충전 시간을 넘으면 다음 공격이 턱 타격
+var chain_n = 0
+var guard_near = false
+var leap_cd = 0.0
+var stun_t = 0.0
+var still_t = 0.0
+var reveal_t = 0.0
+var lone_mult = 1.0
+var lure_cd = 0.0
+var immune_t = 0.0       # 유인병 효과 면역
+var land_t = 0.0         # 낙하 사냥꾼이 지상에 내려와 있는 남은 시간
+var last_pos = Vector2.ZERO
 var dead = false
 var selected = false
 var facing = 0.0
@@ -87,6 +100,11 @@ func setup(g, p, k, pos):
 		layer = "air"
 	elif d.get("amphibious", false):
 		layer = "raft"
+	if is_worker and p != Data.NEUTRAL_ID:
+		var fd = Data.FACTIONS.get(g.players[p].faction, {})
+		if fd.has("worker_dmg"):
+			d = d.duplicate()
+			d["dmg"] = fd["worker_dmg"]
 	can_fight = d["dmg"] > 0.0
 	hits_air = d.get("hits_air", d["reach"] > 30.0)
 	refresh_hp()
@@ -119,7 +137,7 @@ func detect_range():
 
 func spd():
 	var pp = game.players[pid]
-	var s = d["speed"] * pp.speed_mult(air) * slow
+	var s = d["speed"] * pp.speed_mult(air) * slow * lone_mult
 	if trail:
 		s *= Data.PATHFINDER_WORKER_SPEED
 	if not air:
@@ -287,6 +305,11 @@ func _physics_process(delta):
 	_tick_status(delta)
 	if dead:
 		return
+	_tick_trap(delta)
+	if stun_t > 0.0:
+		stun_t -= delta
+		queue_redraw()
+		return
 	if shield_t > 0.0:
 		shield_t -= delta
 		if shield_t <= 0.0:
@@ -305,6 +328,9 @@ func _physics_process(delta):
 		if not is_neutral:
 			terr = game.territory_state(pid, position)
 			slow = game.curtain_factor(self)
+			if d.get("guard", false):
+				guard_near = game.near_own_building(position, pid, Data.GUARD_RADIUS)
+			lone_mult = game.lone_factor(self)
 	match state:
 		IDLE:
 			if not rooted:
@@ -416,8 +442,22 @@ func _do_attack(delta):
 			if alarm_stacks > 0:
 				cd *= 1.0 - 0.1 * alarm_stacks
 			var p = game.players[pid]
-			var dmg = d["dmg"]
+			var dmg = d["dmg"] * lone_mult
 			var upg = d.get("upg", 1.0)
+			# 턱 타격: 한동안 공격하지 않았으면 3배
+			var snapped = false
+			if d.get("snap", false) and snap_t >= snap_charge():
+				snapped = true
+				dmg *= Data.SNAP_MULT
+				if stealthed and p.has("full_ambush"):
+					dmg *= Data.FULL_AMBUSH_MULT
+			if d.get("ambush", false) and stealthed:
+				dmg *= Data.AMBUSH_MULT
+			snap_t = 0.0
+			if stealthed:
+				stealthed = false
+			reveal_t = Data.STEALTH_REVEAL
+			still_t = 0.0
 			if d["reach"] <= 30.0:
 				dmg *= p.melee_mult(upg)
 			else:
@@ -446,9 +486,12 @@ func _do_attack(delta):
 				game.add_zone(target.position, Data.ACID_POOL_TIME, pid, Data.ACID_POOL_RADIUS, Data.ACID_POOL_DPS, "acid")
 			if d["reach"] > 30.0:
 				game.add_shot(position, target.position, Color(0.8, 1.0, 0.3))
+			var tpos = target.position
 			target.take_damage(dmg, self)
 			if not is_worker and _valid(target):
 				target.add_venom(p.venom_cap(), p.has("burn"))
+			if snapped:
+				_after_snap(target, tpos, dmg)
 	elif rooted:
 		# 거점화 중에는 쫓아가지 않는다
 		target = null
@@ -532,7 +575,7 @@ func _go(p, delta, stop):
 	var dir = aim - position
 	if dir.length() < 0.5:
 		dir = to
-	if pinned_t > 0.0:
+	if pinned_t > 0.0 or stun_t > 0.0:
 		return false
 	var speed = spd()
 	if not air and terr == -1:
@@ -643,6 +686,107 @@ func _draw_neutral(c):
 		draw_rect(Rect2(-w / 2.0, -r - 8.0, w, 3.0), Color(0, 0, 0, 0.6))
 		draw_rect(Rect2(-w / 2.0, -r - 8.0, w * clamp(hp / max_hp, 0.0, 1.0), 3.0), Color(0.9, 0.8, 0.3))
 
+# ---------- 함정턱개미 ----------
+
+func snap_charge():
+	return Data.SNAP_CHARGE_GUARD if guard_near else Data.SNAP_CHARGE
+
+func snap_ready():
+	return d.get("snap", false) and snap_t >= snap_charge()
+
+func _tick_trap(delta):
+	snap_t += delta
+	leap_cd -= delta
+	lure_cd -= delta
+	immune_t -= delta
+	if reveal_t > 0.0:
+		reveal_t -= delta
+	# 실제로 움직였을 때만 "멈춰 있음"이 풀린다(제자리 공격은 멈춘 것으로 본다)
+	if position.distance_to(last_pos) > 40.0 * delta:
+		still_t = 0.0
+	else:
+		still_t += delta
+	last_pos = position
+	if land_t > 0.0:
+		land_t -= delta
+		if land_t <= 0.0:
+			_take_off()
+	if is_neutral:
+		return
+	# 은신: 그림자 척후는 늘, 덫지기는 거점화 중, 완전 매복이면 멈춰 있는 전투 유닛
+	var want = false
+	if d.get("cloak", false):
+		want = true
+	elif reveal_t <= 0.0:
+		if d.get("ambush", false) and rooted:
+			want = true
+		elif can_fight and not is_worker and still_t >= Data.STILL_TIME and game.players[pid].has("full_ambush"):
+			want = true
+	stealthed = want
+
+func _after_snap(t, tpos, dmg):
+	var p = game.players[pid]
+	if d.get("line", false):
+		game.snap_line(self, tpos, dmg * Data.KING_LINE_MULT, t)
+	if _valid(t) and t.get("is_neutral") != null and not t.rooted:
+		# 밀쳐내기(강화 격발이면 2배 + 기절)
+		var push = Data.SNAP_KNOCK_POWER if p.has("power_snap") else Data.SNAP_KNOCK
+		var dir = (t.position - position).normalized()
+		var to = t.position + dir * push
+		if not t.air:
+			to = game.terrain.nearest_open(to, t.layer)
+		t.position = to.clamp(Vector2(10, 10), Data.MAP_SIZE - Vector2(10, 10))
+		if p.has("power_snap"):
+			t.stun_t = Data.SNAP_STUN
+	if not _valid(t) and p.has("chain_snap") and chain_n < Data.CHAIN_MAX:
+		snap_t = 999.0
+		chain_n += 1
+	else:
+		chain_n = 0
+	if p.has("pack"):
+		game.pack_snap(self)
+	if d.get("leap", false):
+		leap_back(tpos)
+	if d.get("dive", false) and air:
+		_land()
+
+# 턱 도약: 대상 반대쪽으로 크게 뛴다. 숙련이면 절벽·물을 넘는다
+func leap_back(from):
+	if leap_cd > 0.0:
+		return false
+	var master = game.players[pid].has("leap_master")
+	var dir = (position - from).normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.RIGHT.rotated(facing + PI)
+	var to = (position + dir * Data.LEAP_DIST).clamp(Vector2(10, 10), Data.MAP_SIZE - Vector2(10, 10))
+	if not game.terrain.passable(to, layer):
+		if not master:
+			return false
+		to = game.terrain.nearest_open(to, layer)
+	if not master and not game.terrain.line_clear(position, to, layer):
+		return false
+	game.add_shot(position, to, Color(1, 1, 1, 0.5))
+	position = to
+	leap_cd = Data.LEAP_CD_MASTER if master else Data.LEAP_CD
+	target = null
+	state = IDLE
+	path = []
+	return true
+
+func _land():
+	if not game.terrain.passable(position, "ground"):
+		return
+	air = false
+	layer = "ground"
+	z_index = 5
+	land_t = Data.DIVE_GROUND_TIME
+
+func _take_off():
+	air = true
+	layer = "air"
+	z_index = 8
+	path = []
+
 # ---------- 상태 효과 ----------
 
 func add_venom(cap, _burn):
@@ -696,6 +840,11 @@ func _draw():
 			draw_arc(Vector2.ZERO, Data.CURTAIN_RADIUS, 0.0, TAU, 40, Color(1, 1, 1, 0.3), 1.0)
 	if pinned_t > 0.0:
 		draw_arc(Vector2.ZERO, r + 3.0, 0.0, TAU, 12, Color(1, 1, 1, 0.8), 1.5)
+	if stun_t > 0.0:
+		for i in 3:
+			draw_circle(Vector2(r * 0.8, 0).rotated(i * TAU / 3.0 + stun_t * 6.0) + Vector2(0, -r - 6.0), 1.6, Color(1, 1, 0.4))
+	if snap_ready() and not is_neutral:
+		draw_circle(Vector2(r + 3.0, 0).rotated(facing), 2.0, Color(1.0, 0.9, 0.3, 0.9))
 	draw_set_transform(Vector2.ZERO, facing, Vector2.ONE)
 	if air:
 		draw_circle(Vector2(-r * 0.2, -r * 0.9), r * 0.7, Color(1, 1, 1, 0.45))

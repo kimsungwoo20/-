@@ -307,8 +307,9 @@ func map_checks(game):
 	# 은신과 감지
 	clear_units(game)
 	var far = Vector2(1600, 1600)
-	var hidden = game.spawn_unit(1, "soldier", far)
-	hidden.stealthed = true
+	# 그림자 척후는 늘 은신한다
+	var hidden = game.spawn_unit(1, "shade", far)
+	await wait(0.05)
 	var hunter = game.spawn_unit(0, "stinger", far + Vector2(60, 0))
 	hunter.cmd_amove(far + Vector2(-200, 0))
 	await wait(1.5)
@@ -865,6 +866,229 @@ func weaver_checks(game):
 		tent.add_build(1000.0)
 		await wait(0.5)
 		check(game.in_build_territory(1, tp + Vector2(120, 0)), "전진 둥지가 작은 영역을 만든다")
+
+	await trap_checks(game)
+
+func dummy(game, pid, kind, pos):
+	# 맞기만 하고 반격하지 않는 표적
+	var u = game.spawn_unit(pid, kind, pos)
+	u.max_hp = 9999.0
+	u.hp = 9999.0
+	u.can_fight = false
+	return u
+
+func trap_checks(game):
+	# 플레이어 1 을 함정턱개미로 바꿔서 확인한다
+	var T = game.players[1]
+	var F = game.players[0]
+	T.faction = "trap"
+	T.research.clear()
+	T.food = 99999.0
+	T.mat = 99999.0
+	clear_units(game)
+	await wait(0.2)
+	var base = Vector2(2300, 700)
+	var fm = F.taken_mult()
+
+	# 진영 규칙
+	check(T.unit_food("worker") == 75 and F.unit_food("worker") == 50, "함정턱개미 일꾼은 식량 75")
+	check(T.carry_amount("food") - F.carry_amount("food") == 5.0 - 2.0 * F.level("carry"), "함정턱개미 일꾼은 무엇이든 5 더 나른다")
+	var tw = game.spawn_unit(1, "worker", base)
+	check(tw.d["dmg"] == 6.0 and game.spawn_unit(0, "worker", base + Vector2(0, 300)).d["dmg"] == 3.0, "함정턱개미 일꾼 공격력 6 (다른 진영 3)")
+	clear_units(game)
+	for u in game.units.duplicate():
+		if u.is_worker and u.position.distance_to(base) < 400.0:
+			u.dead = true
+			game.remove_unit(u)
+	var hb = game.spawn_building(1, "combat", Vector2(2500, 1000), true, false)
+	var hn = game.spawn_building(1, "nest", Vector2(2700, 1000), true, false)
+	check(hb.stealthed and not hn.stealthed, "본진 외 건물은 은폐")
+	var raider = dummy(game, 0, "stinger", hb.position + Vector2(-60, 0))
+	raider.can_fight = true
+	raider.cmd_amove(hb.position + Vector2(200, 0))
+	await wait(2.0)
+	check(hb.hp == hb.max_hp, "감지하지 못한 은폐 건물은 공격받지 않는다")
+	game._update_fog()
+	check(not hb.visible, "감지하지 못한 은폐 건물은 보이지 않는다")
+	var eye = game.spawn_unit(0, "scout", hb.position + Vector2(0, -80))
+	raider.cmd_attack(hb)
+	await wait(2.0)
+	check(hb.hp < hb.max_hp, "감지하면 은폐 건물을 공격할 수 있다")
+	game._update_fog()
+	check(hb.visible, "감지하면 은폐 건물이 보인다")
+	clear_units(game)
+	hb.take_damage(99999.0, null)
+	hn.take_damage(99999.0, null)
+	await wait(0.1)
+
+	# 턱 타격
+	var h = game.spawn_unit(1, "hunter", base)
+	var v = dummy(game, 0, "soldier", base + Vector2(20, 0))
+	var d1 = await hit_once(game, h, v)
+	check(abs(d1 - 36.0 * fm) < 0.01, "충전된 첫 공격은 턱 타격 3배 (%.1f)" % d1)
+	check(v.position.x - base.x > 20.0 + Data.SNAP_KNOCK * 0.8, "턱 타격은 적을 밀쳐낸다")
+	var d2 = await hit_once(game, h, v)
+	check(abs(d2 - 12.0 * fm) < 0.01, "바로 다음 공격은 보통 피해 (%.1f)" % d2)
+	h.cmd_stop()
+	h.can_fight = false      # 기다리는 동안 옆의 표적을 저절로 공격하지 않게
+	await wait(Data.SNAP_CHARGE + 0.2)
+	h.can_fight = true
+	check(h.snap_ready(), "%d초 동안 공격하지 않으면 다시 충전" % int(Data.SNAP_CHARGE))
+	T.research["power_snap"] = true
+	var x0 = v.position.x
+	await hit_once(game, h, v)
+	check(v.stun_t > 0.0 and v.position.x - x0 > Data.SNAP_KNOCK * 1.5, "강화 격발: 밀쳐내기 2배, 기절")
+	var sp = v.position
+	v.cmd_move(sp + Vector2(200, 0))
+	await wait(0.4)
+	check(v.position.distance_to(sp) < 1.0, "기절한 적은 움직이지 못한다")
+	T.research.erase("power_snap")
+	clear_units(game)
+
+	# 연쇄 격발
+	T.research["chain_snap"] = true
+	h = game.spawn_unit(1, "hunter", base)
+	var weak = game.spawn_unit(0, "stinger", base + Vector2(16, 0))
+	weak.can_fight = false
+	weak.max_hp = 20.0
+	weak.hp = 20.0
+	h.cmd_attack(weak)
+	await wait(0.6)
+	check(not game.units.has(weak) and h.snap_ready() and h.chain_n == 1, "연쇄 격발: 턱 타격으로 처치하면 즉시 재충전")
+	T.research.erase("chain_snap")
+	clear_units(game)
+
+	# 대왕 포식자
+	var kg = game.spawn_unit(1, "king", base)
+	var front = dummy(game, 0, "soldier", base + Vector2(28, 0))
+	var behind = dummy(game, 0, "soldier", base + Vector2(70, 0))
+	var side = dummy(game, 0, "soldier", base + Vector2(28, 80))
+	await hit_once(game, kg, front)
+	check(behind.hp < 9999.0 and side.hp == 9999.0, "대왕 포식자: 대상 뒤 직선 위의 적만 함께 맞는다")
+	clear_units(game)
+
+	# 도약 사냥꾼
+	var lp = game.spawn_unit(1, "leaper", base)
+	var lv = dummy(game, 0, "soldier", base + Vector2(20, 0))
+	var lp0 = lp.position
+	await hit_once(game, lp, lv)
+	await wait(0.05)
+	check(lp.position.distance_to(lp0) > Data.LEAP_DIST * 0.7 and lp.position.x < lp0.x, "도약 사냥꾼: 턱 타격 후 뒤로 뛰어 이탈")
+	check(lp.leap_cd > Data.LEAP_CD - 1.0, "턱 도약 재사용 대기 %d초" % int(Data.LEAP_CD))
+	var fly = dummy(game, 0, "swarm", lp.position + Vector2(20, 0))
+	var fd = await hit_once(game, lp, fly)
+	check(fd > 0.0, "도약 사냥꾼은 공중 유닛도 공격")
+	clear_units(game)
+	# 숙련: 절벽 넘기
+	var cliff_n = Vector2(2000, 440)
+	var lp2 = game.spawn_unit(1, "leaper", cliff_n)
+	check(not lp2.leap_back(cliff_n + Vector2(0, -50)), "숙련 없이는 절벽 너머로 도약 불가")
+	T.research["leap_master"] = true
+	check(lp2.leap_back(cliff_n + Vector2(0, -50)) and lp2.position.y > 544.0 and lp2.leap_cd > Data.LEAP_CD_MASTER - 1.0, "턱 도약 숙련: 절벽을 넘고 재사용 대기 %d초" % int(Data.LEAP_CD_MASTER))
+	T.research.erase("leap_master")
+	clear_units(game)
+
+	# 덫지기와 은신
+	var tr = game.spawn_unit(1, "trapper", base)
+	await wait(0.1)
+	check(not tr.stealthed, "덫지기는 움직일 수 있을 때는 보인다")
+	tr.toggle_root()
+	await wait(0.1)
+	check(tr.stealthed, "덫지기는 거점화하면 은신")
+	var walker = dummy(game, 0, "soldier", base + Vector2(16, 0))
+	var td = await hit_once(game, tr, walker)
+	check(abs(td - 20.0 * fm) < 0.01, "덫지기: 은신 중 첫 타격 2배 (%.1f)" % td)
+	check(not tr.stealthed, "공격하면 은신이 풀린다")
+	walker.dead = true
+	game.remove_unit(walker)
+	await wait(Data.STEALTH_REVEAL + 0.3)
+	check(tr.stealthed, "%d초 뒤 다시 은신" % int(Data.STEALTH_REVEAL))
+	clear_units(game)
+	var sh = game.spawn_unit(1, "shade", base)
+	sh.cmd_move(base + Vector2(200, 0))
+	await wait(0.3)
+	check(sh.stealthed and sh.state == sh.MOVE, "그림자 척후는 움직여도 은신")
+	check(sh.detect_range() > 0.0, "그림자 척후는 은신을 감지")
+	clear_units(game)
+	var hh = game.spawn_unit(1, "hunter", base)
+	await wait(Data.STILL_TIME + 0.3)
+	check(not hh.stealthed, "완전 매복 없이는 멈춰 있어도 보인다")
+	T.research["full_ambush"] = true
+	await wait(0.1)
+	check(hh.stealthed, "완전 매복: 멈춰 있는 전투 유닛 은신")
+	var av = dummy(game, 0, "soldier", base + Vector2(16, 0))
+	var ad = await hit_once(game, hh, av)
+	check(abs(ad - 12.0 * 3.0 * 1.5 * fm) < 0.01, "완전 매복: 은신 중 턱 타격 1.5배 (%.1f)" % ad)
+	T.research.erase("full_ambush")
+	clear_units(game)
+
+	# 굴 수호자
+	var nb = game.spawn_building(1, "lab", Vector2(2500, 1500), true, false)
+	var gu_in = game.spawn_unit(1, "guardian", nb.position + Vector2(60, 0))
+	var gu_out = game.spawn_unit(1, "guardian", Vector2(2100, 1500))
+	await wait(0.6)
+	check(gu_in.snap_charge() == Data.SNAP_CHARGE_GUARD and gu_out.snap_charge() == Data.SNAP_CHARGE, "굴 수호자: 아군 건물 근처에서 턱 타격 충전 %d초" % int(Data.SNAP_CHARGE_GUARD))
+	clear_units(game)
+	nb.take_damage(99999.0, null)
+
+	# 유인병
+	var lu = game.spawn_unit(1, "lure", base)
+	var e1 = dummy(game, 0, "soldier", base + Vector2(120, 0))
+	var e2 = dummy(game, 0, "soldier", base + Vector2(-100, 60))
+	var e3 = dummy(game, 0, "soldier", base + Vector2(400, 0))
+	for e in [e1, e2, e3]:
+		e.can_fight = true
+	await wait(0.05)
+	check(game.use_lure(lu) == 2, "경보 페로몬: 반경 안의 적 2기만 끌린다")
+	check(e1.target == lu and e2.target == lu and e3.target != lu, "끌린 적은 유인병을 공격한다")
+	check(not game.use_lure(lu), "재사용 대기 중에는 다시 쓸 수 없다")
+	lu.lure_cd = 0.0
+	check(game.use_lure(lu) == 0, "한 번 끌린 적은 %d초 동안 면역" % int(Data.LURE_IMMUNE))
+	clear_units(game)
+
+	# 낙하 사냥꾼
+	var dv = game.spawn_unit(1, "diver", base)
+	var dt = dummy(game, 0, "soldier", base + Vector2(18, 0))
+	var dd = await hit_once(game, dv, dt)
+	check(abs(dd - 42.0 * fm) < 0.01 and not dv.air, "낙하 사냥꾼: 급강하 턱 타격 후 착지 (%.1f)" % dd)
+	var mel = dummy(game, 0, "stinger", dv.position + Vector2(-14, 0))
+	check(mel.can_hit(dv), "착지한 낙하 사냥꾼은 근접 공격을 받는다")
+	dv.cmd_stop()
+	mel.cmd_stop()
+	await wait(Data.DIVE_GROUND_TIME + 0.3)
+	check(dv.air and not mel.can_hit(dv), "%d초 뒤 다시 날아오른다" % int(Data.DIVE_GROUND_TIME))
+	clear_units(game)
+
+	# 분기 진화
+	T.research["lone_hunter"] = true
+	var solo = game.spawn_unit(1, "hunter", base)
+	await wait(0.6)
+	check(abs(solo.lone_mult - 1.3) < 0.001 and abs(solo.spd() - 90.0 * 1.3) < 0.01, "고독한 사냥꾼: 혼자면 공격력·속도 +30%")
+	var b1 = game.spawn_unit(1, "hunter", base + Vector2(30, 0))
+	var b2 = game.spawn_unit(1, "hunter", base + Vector2(0, 30))
+	await wait(0.6)
+	check(abs(solo.lone_mult - 1.1) < 0.001, "아군 2기가 곁에 있으면 +10%")
+	T.research.erase("lone_hunter")
+	clear_units(game)
+	T.research["pack"] = true
+	var packers = []
+	var victims = []
+	for i in 3:
+		packers.append(game.spawn_unit(1, "hunter", base + Vector2(0, i * 40)))
+		victims.append(dummy(game, 0, "soldier", base + Vector2(18, i * 40)))
+	var bystander = dummy(game, 0, "soldier", base + Vector2(40, 100))
+	for i in 3:
+		packers[i].cmd_attack(victims[i])
+	await wait(0.5)
+	check(bystander.hp <= 9999.0 - Data.PACK_SHOCK_DMG * fm + 0.01, "사냥 무리: 3기가 동시에 턱 타격하면 충격파")
+	T.research.erase("pack")
+	clear_units(game)
+	var kc = game.spawn_building(1, "combat", Vector2(2700, 1300), true, false)
+	game.main_nest(1).tier = 3
+	check(not game.enqueue_unit(kc, "king"), "포식자의 왕 없이는 대왕 포식자 생산 불가")
+	T.research["king_unlock"] = true
+	check(game.enqueue_unit(kc, "king"), "포식자의 왕 연구 후 생산 가능")
+	game.cancel_last(kc)
 
 func _initialize():
 	Engine.time_scale = 1.0

@@ -26,6 +26,11 @@ const PLANS = {
 		"research": ["high_yield", "carry1", "jaw1", "shell1", "hitchhiker", "colony1", "spawn1", "jaw2",
 			"shear1", "shell2", "antibiotic", "carry2", "nursery1", "colony2", "size1", "supermajor_caste", "branch",
 			"jaw3", "shell3", "troph1", "legs1", "size2", "nursery2", "troph2", "flight1", "spawn2"]},
+	"trap": {"t1": "hunter", "t2": "leaper", "t3": "king", "def": "guardian", "air": "diver",
+		"branches": ["lone_hunter", "pack"], "max_workers": 20,
+		"research": ["carry1", "jaw1", "shell1", "chain_snap", "colony1", "full_ambush", "jaw2", "power_snap",
+			"shell2", "leap_master", "carry2", "nursery1", "size1", "king_unlock", "branch", "jaw3", "shell3",
+			"size2", "legs1", "nursery2", "flight1", "spawn1", "colony2"]},
 	"weaver": {"t1": "acid", "t2": "puller", "t3": "lord", "def": "pinner", "air": "airsentry",
 		"branches": ["fortress", "spreading"],
 		"research": ["carry1", "gland1", "shell1", "silk_road", "colony1", "spawn1", "living_chain", "gland2",
@@ -94,7 +99,7 @@ func tick(delta):
 	var queued = 0
 	for n in nests:
 		queued += n.queue.size()
-	var want = min(14 + 6 * (nests.size() - 1), 40)
+	var want = min(14 + 6 * (nests.size() - 1), plan.get("max_workers", 40))
 	for n in nests:
 		if workers.size() + queued < want and n.queue.is_empty():
 			if game.enqueue_unit(n, "worker"):
@@ -306,7 +311,8 @@ func _command_army(army, main):
 		var tgt = null
 		var bd = 1e12
 		for b in game.buildings:
-			if b.pid != pid and not b.dead:
+			# 감지하지 못한 은폐 건물은 공격 목표로 삼지 않는다
+			if b.pid != pid and not b.dead and not (b.stealthed and not game.is_detected(b, pid)):
 				var dd = b.position.distance_squared_to(main.position)
 				if dd < bd:
 					bd = dd
