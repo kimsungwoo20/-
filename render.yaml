@@ -1,0 +1,10 @@
+# Render 배포 설정(Blueprint). Render 에서 이 저장소를 연결하면 연결 중개 서버가 만들어진다.
+services:
+  - type: web
+    name: ant-rts-signaling
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node signaling.js
+    healthCheckPath: /

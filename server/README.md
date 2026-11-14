@@ -19,6 +19,19 @@ PORT=9080 node signaling.js
 
 ## 배포
 
+### Render 로 배포(저장소에 설정 파일 render.yaml 이 들어 있다)
+
+1. https://render.com 에 GitHub 계정으로 가입한다.
+2. 대시보드에서 New → Blueprint 를 고르고 이 저장소를 연결한다(비공개 저장소면 Render 에 저장소 접근을 허락한다).
+3. 브랜치를 고르면 render.yaml 을 읽어 `ant-rts-signaling` 서비스를 만든다. 무료(Free) 요금제로 둔다.
+4. 배포가 끝나면 `https://ant-rts-signaling-xxxx.onrender.com` 같은 주소가 나온다. 브라우저로 열어 "연결 중개 서버 동작 중" 이 보이면 된다.
+5. 게임에는 https 를 wss 로 바꿔서 쓴다: `wss://ant-rts-signaling-xxxx.onrender.com`
+
+무료 요금제는 15분 동안 접속이 없으면 잠들고, 다음 접속 때 깨어나는 데 1분쯤 걸린다. 첫 "방 만들기" 가 늦게 될 수 있다.
+게임 데이터는 이 서버를 거치지 않으므로 판 도중에 서버가 잠들어도 판은 계속된다.
+
+### 다른 곳
+
 WebSocket 을 지원하는 Node.js 호스팅이면 어디든 된다. 무료 요금제가 있는 곳도 많지만 조건(잠자기, 월 사용량 등)이 자주 바뀌므로 고를 때 확인한다.
 무료 요금제의 "일정 시간 요청이 없으면 잠드는" 서버는 첫 방 만들기가 수십 초 늦을 수 있다.
 

@@ -9,6 +9,7 @@
 //   참가자 → {t:"join", code}              ← {t:"joined", id}   (방장에게는 {t:"peer", id})
 //   서로 → {t:"offer"|"answer"|"cand", to, ...}  → 받는 쪽에 from 을 붙여 그대로 전달
 //   방장이 나가면 참가자에게 {t:"closed"}, 참가자가 나가면 방장에게 {t:"peer_left", id}
+const http = require("http");
 const { WebSocketServer } = require("ws");
 
 const PORT = Number(process.env.PORT || 9080);
@@ -28,7 +29,13 @@ function send(ws, msg) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
 }
 
-const wss = new WebSocketServer({ port: PORT });
+// 브라우저로 주소를 열면 상태를 보여 준다(호스팅 서비스의 상태 확인에도 쓰인다)
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+  res.end(`개미 RTS 연결 중개 서버 동작 중 (열린 방 ${rooms.size}개)\n`);
+});
+const wss = new WebSocketServer({ server });
+server.listen(PORT);
 wss.on("connection", (ws) => {
   ws.room = null;
   ws.id = 0;
