@@ -2,6 +2,7 @@ extends Control
 const Data = preload("res://scripts/data.gd")
 
 var game
+var spots = []       # 맨땅이 아닌 지형 칸(한 번만 계산)
 
 func _process(_delta):
 	queue_redraw()
@@ -9,6 +10,16 @@ func _process(_delta):
 func _draw():
 	var s = size / Data.MAP_SIZE
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.2, 0.16, 0.1))
+	if spots.is_empty():
+		var t = game.terrain
+		for y in t.h:
+			for x in t.w:
+				var k = t.cells[y * t.w + x]
+				if k != 0:
+					spots.append([Vector2(x, y), t.color_of(k)])
+	var cs = Vector2(Data.FOG_CELL, Data.FOG_CELL) * s
+	for e in spots:
+		draw_rect(Rect2(e[0] * cs, cs + Vector2(0.5, 0.5)), e[1])
 	for n in game.res_nodes:
 		draw_rect(Rect2(n.position * s - Vector2(2, 2), Vector2(4, 4)), n.d["color"])
 	for b in game.buildings:

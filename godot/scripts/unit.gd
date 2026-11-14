@@ -1,7 +1,7 @@
 extends Node2D
 const Data = preload("res://scripts/data.gd")
 
-enum {IDLE, MOVE, AMOVE, ATTACK, GATHER, RETURN, BUILD}
+enum {IDLE, MOVE, AMOVE, ATTACK, GATHER, RETURN, BUILD, BOARD}
 
 var game
 var pid = 0
@@ -28,6 +28,15 @@ var is_neutral = false
 var camp = -1
 var home = Vector2.ZERO
 var wander_t = 0.0
+# 길찾기
+var layer = "ground"     # ground / raft / air
+var path = []
+var nav_goal = Vector2.ZERO
+var nav_t = 0.0
+# 뗏목 수송
+var carried = false      # 뗏목에 타 있는 동안에는 지도에 없는 것으로 취급
+var cargo = []
+var board_target = null
 var dead = false
 var selected = false
 var facing = 0.0
@@ -65,6 +74,10 @@ func setup(g, p, k, pos):
 	pop = d["pop"] / float(d["batch"])
 	is_worker = (k == "worker")
 	air = d.get("air", false)
+	if air:
+		layer = "air"
+	elif d.get("amphibious", false):
+		layer = "raft"
 	can_fight = d["dmg"] > 0.0
 	hits_air = d.get("hits_air", d["reach"] > 30.0)
 	refresh_hp()
@@ -107,12 +120,17 @@ func toggle_root():
 	target = null
 	state = IDLE
 
+func _snap(p):
+	if air:
+		return p
+	return game.terrain.nearest_open(p, layer)
+
 func cmd_move(p):
 	if rooted:
 		return
 	_leave()
 	state = MOVE
-	dest = p
+	dest = _snap(p)
 	target = null
 	build_target = null
 
@@ -121,8 +139,8 @@ func cmd_amove(p):
 		return
 	_leave()
 	state = AMOVE
-	dest = p
-	amove_dest = p
+	dest = _snap(p)
+	amove_dest = dest
 	target = null
 	build_target = null
 
@@ -148,6 +166,61 @@ func cmd_build(b):
 	build_target = b
 	state = BUILD
 
+func cmd_board(raft):
+	if rooted or air or d.get("amphibious", false):
+		return
+	_leave()
+	board_target = raft
+	target = null
+	build_target = null
+	state = BOARD
+
+func cargo_pop():
+	var n = 0.0
+	for u in cargo:
+		n += u.pop
+	return n
+
+func take_aboard(u):
+	if cargo_pop() + u.pop > Data.RAFT_CAPACITY + 0.001:
+		return false
+	cargo.append(u)
+	u.carried = true
+	u.visible = false
+	u.selected = false
+	u.state = IDLE
+	u.target = null
+	u.board_target = null
+	return true
+
+# 하선: 뗏목 주변의 땅에 내려놓는다. 주변에 땅이 없으면 실패
+func unload():
+	if cargo.is_empty():
+		return true
+	var spot = null
+	for r in [20.0, 40.0, 64.0]:
+		for k in 8:
+			var q = position + Vector2(r, 0).rotated(k * TAU / 8.0)
+			if game.terrain.passable(q, "ground"):
+				spot = q
+				break
+		if spot != null:
+			break
+	if spot == null and game.terrain.passable(position, "ground"):
+		spot = position
+	if spot == null:
+		return false
+	var i = 0
+	for u in cargo:
+		u.carried = false
+		u.visible = true
+		var q = spot + Vector2.RIGHT.rotated(i * 2.4) * 10.0 * sqrt(float(i))
+		u.position = game.terrain.nearest_open(q, "ground")
+		u.state = IDLE
+		i += 1
+	cargo.clear()
+	return true
+
 func cmd_stop():
 	_leave()
 	target = null
@@ -157,8 +230,11 @@ func cmd_stop():
 # ---------- 매 틱 ----------
 
 func _physics_process(delta):
-	if dead:
+	if dead or carried:
 		return
+	if cargo.size() > 0:
+		for u in cargo:
+			u.position = position
 	cd -= delta
 	_tick_status(delta)
 	if dead:
@@ -191,7 +267,22 @@ func _physics_process(delta):
 			_do_return(delta)
 		BUILD:
 			_do_build(delta)
+		BOARD:
+			_do_board(delta)
 	queue_redraw()
+
+func _do_board(delta):
+	if not _valid(board_target) or board_target.pid != pid:
+		board_target = null
+		state = IDLE
+		return
+	var reach = board_target.radius + radius + Data.BOARD_REACH
+	if _go(board_target.position, delta, reach):
+		var raft = board_target
+		board_target = null
+		state = IDLE
+		if not raft.take_aboard(self) and pid == game.human_id:
+			game.msg("뗏목단에 자리가 없습니다")
 
 # 중립 생물: 둥지 주변을 어슬렁거리다가, 너무 멀리 끌려 나오면 돌아가며 회복한다
 func _neutral_idle(delta):
@@ -199,7 +290,7 @@ func _neutral_idle(delta):
 	wander_t -= delta
 	if wander_t <= 0.0:
 		wander_t = randf_range(3.0, 7.0)
-		dest = home + Vector2(randf_range(-40, 40), randf_range(-40, 40))
+		dest = _snap(home + Vector2(randf_range(-40, 40), randf_range(-40, 40)))
 		state = MOVE
 
 func _leash():
@@ -273,7 +364,7 @@ func _do_attack(delta):
 		_go(target.position, delta, reach - 2.0)
 		# 건물을 치러 가는 길에 적 유닛이 붙으면 그쪽을 먼저 상대한다
 		think -= delta
-		if think <= 0.0:
+		if think <= 0.0 and not is_neutral:
 			think = 0.5
 			var t = game.find_enemy_unit(position, pid, 60.0, hits_air)
 			if t != null:
@@ -340,11 +431,51 @@ func _go(p, delta, stop):
 	var dist = to.length()
 	if dist <= stop:
 		return true
-	var v = to / dist * spd() + _separation()
+	var aim = p
+	if not air:
+		aim = _nav(p, delta)
+	var dir = aim - position
+	if dir.length() < 0.5:
+		dir = to
+	var speed = spd()
+	if not air:
+		speed *= game.terrain.speed_mult(position, layer)
+	var v = dir.normalized() * speed + _separation()
+	var old = position
 	position += v * delta
 	position = position.clamp(Vector2(10, 10), Data.MAP_SIZE - Vector2(10, 10))
-	facing = to.angle()
+	if not air and not game.terrain.passable(position, layer):
+		# 물이나 절벽으로 밀려 들어가지 않게: 한 축씩만 움직여 보고, 안 되면 제자리
+		if game.terrain.passable(Vector2(position.x, old.y), layer):
+			position.y = old.y
+		elif game.terrain.passable(Vector2(old.x, position.y), layer):
+			position.x = old.x
+		else:
+			position = old
+	facing = dir.angle()
 	return false
+
+# 다음에 향할 지점. 곧장 갈 수 있으면 목표 그대로, 아니면 길찾기 경로의 다음 점
+func _nav(p, delta):
+	nav_t -= delta
+	if nav_t <= 0.0 or p.distance_to(nav_goal) > 40.0:
+		nav_t = 0.3 + randf() * 0.15
+		nav_goal = p
+		var t = game.terrain
+		if t.line_clear(position, p, layer):
+			path = []
+		else:
+			path = t.find_path(position, p, layer)
+			# 보이는 데까지는 중간 점을 건너뛰어 지그재그를 줄인다
+			var skip = 0
+			while skip < 6 and path.size() > 1 and t.line_clear(position, path[1], layer):
+				path.remove_at(0)
+				skip += 1
+	while path.size() > 0 and position.distance_to(path[0]) < 12.0:
+		path.remove_at(0)
+	if path.size() > 0:
+		return path[0]
+	return p
 
 func _separation():
 	var push = Vector2.ZERO
@@ -459,6 +590,11 @@ func _draw():
 		draw_circle(Vector2(-r * 0.9, 0), r * 0.4, Color(0.8, 1.0, 0.3))
 	if is_worker:
 		draw_circle(Vector2.ZERO, r * 0.25, Color(1, 1, 1, 0.7))
+	if kind == "raft":
+		draw_circle(Vector2.ZERO, r, Color(0.45, 0.3, 0.15))
+		draw_arc(Vector2.ZERO, r, 0.0, TAU, 20, c, 2.0)
+		for i in cargo.size():
+			draw_circle(Vector2(r * 0.55, 0).rotated(i * TAU / 8.0), 2.0, c.lightened(0.3))
 	if carry > 0.0:
 		var cc = Data.FOOD_COLOR
 		if carry_res == "mat":

@@ -351,6 +351,148 @@ func map_checks(game):
 	var after = game.res_nodes.filter(func(n): return n.kind == "corpse")
 	check(after.size() == before + 1 and abs(after[-1].amount - Data.CENTER_DROP_AMOUNT) < 0.1, "%d초마다 맵 중앙에 큰 사체가 떨어진다" % int(Data.CENTER_DROP_EVERY))
 
+	await terrain_checks(game)
+
+# 유닛을 목표까지 보내며 지나간 지형을 기록한다. [도착 여부, 물 위를 지났는가, 걸린 시간(초)]
+func travel(game, u, to, limit):
+	u.cmd_move(to)
+	var wet = false
+	var t0 = game.elapsed
+	while game.elapsed - t0 < limit:
+		await physics_frame
+		if game.terrain.kind_at(u.position) == 1:
+			wet = true
+		if u.position.distance_to(to) < 12.0:
+			return [true, wet, game.elapsed - t0]
+	return [false, wet, game.elapsed - t0]
+
+func terrain_checks(game):
+	var T = game.terrain
+	var p = game.players[0]
+	clear_units(game)
+	await wait(0.1)
+	var start = Vector2(420, 1000)
+
+	# 지도 배치 검증
+	var bad = 0
+	for n in game.res_nodes:
+		if n.kind != "corpse" and (T.kind_at(n.position) == 1 or T.kind_at(n.position) == 2 or not T.reachable(start, n.position, "ground")):
+			bad += 1
+	check(bad == 0, "모든 자원 지점이 땅 위에 있고 시작 위치에서 걸어서 닿는다")
+	bad = 0
+	for e in game.expansions:
+		if not T.can_build(e, 40.0) or not T.reachable(start, e, "ground"):
+			bad += 1
+	check(bad == 0, "모든 확장 지점에 둥지를 지을 수 있고 걸어서 닿는다")
+	bad = 0
+	for c in game.camps:
+		if not T.passable(c["pos"], "ground") or not T.reachable(start, c["pos"], "ground"):
+			bad += 1
+	check(bad == 0, "모든 중립 무리가 땅 위에 있고 걸어서 닿는다")
+	check(T.reachable(start, Vector2(Data.MAP_SIZE.x - 420, 1000), "ground"), "두 시작 위치가 육로로 이어져 있다")
+
+	# 호수(x 960~1120)를 사이에 둔 이동
+	Engine.time_scale = 4.0
+	var a = Vector2(900, 1000)
+	var b = Vector2(1180, 1000)
+	var g = game.spawn_unit(0, "stinger", a)
+	var rg = await travel(game, g, b, 30.0)
+	check(rg[0] and not rg[1], "지상 유닛은 호수를 돌아서 간다 (물에 들어가지 않음, %.1f초)" % rg[2])
+	var s = game.spawn_unit(0, "scout", a)
+	var rs = await travel(game, s, b, 30.0)
+	check(rs[0] and rs[1], "공중 유닛은 호수 위를 곧장 건넌다 (%.1f초)" % rs[2])
+	check(rs[2] < rg[2] * 0.6, "공중 유닛이 훨씬 빨리 도착한다")
+	# 절벽(y 480~544)
+	var g2 = game.spawn_unit(0, "stinger", Vector2(1230, 440))
+	var rc = await travel(game, g2, Vector2(1230, 590), 30.0)
+	check(rc[0], "지상 유닛은 절벽을 돌아서 반대편에 도착한다 (%.1f초)" % rc[2])
+	check(rc[2] > 150.0 / g2.spd() * 1.5, "절벽을 넘지 못해 직선보다 오래 걸린다")
+	Engine.time_scale = 1.0
+	clear_units(game)
+
+	# 물로 가라는 명령은 가장 가까운 땅으로 바뀐다
+	var g3 = game.spawn_unit(0, "stinger", a)
+	g3.cmd_move(Vector2(1040, 1000))
+	check(T.passable(g3.dest, "ground"), "물 한가운데로 이동 명령을 내리면 가까운 물가로 간다")
+	g3.dead = true
+	game.remove_unit(g3)
+
+	# 수목: 느려진다
+	var ts = game.spawn_unit(0, "soldier", Vector2(1390, 800))
+	ts.cmd_move(Vector2(1495, 800))
+	await wait(0.2)
+	var x0 = ts.position.x
+	await wait(0.5)
+	var v = (ts.position.x - x0) / 0.5
+	check(abs(v - ts.spd() * Data.TREE_SPEED) < ts.spd() * 0.08, "수목 지대에서 지상 유닛 속도 %d%% (실제 %.0f / %.0f)" % [int(Data.TREE_SPEED * 100), v, ts.spd()])
+	ts.dead = true
+	game.remove_unit(ts)
+
+	# 건설 제한
+	check(not game.can_place("combat", Vector2(1040, 1000)), "물 위에는 건설 불가")
+	check(not game.can_place("combat", Vector2(1200, 512)), "절벽 위에는 건설 불가")
+	check(not game.can_place("combat", Vector2(1440, 800)), "수목 지대에는 건설 불가")
+	check(game.can_place("combat", Vector2(1300, 1250)), "맨땅에는 건설 가능")
+
+	# 뗏목단
+	var sb = null
+	for bb in game.buildings:
+		if bb.pid == 0 and bb.kind == "special":
+			sb = bb
+	p.food = 9999.0
+	p.mat = 9999.0
+	var nest0 = game.main_nest(0)
+	nest0.tier = 3
+	p.research.erase("raft_form")
+	check(sb != null and not game.enqueue_unit(sb, "raft"), "뗏목 진형 없이는 뗏목단 생산 불가")
+	p.research["raft_form"] = true
+	check(sb != null and game.enqueue_unit(sb, "raft"), "뗏목 진형 연구 후 뗏목단 생산 가능")
+	game.cancel_last(sb)
+	var raft = game.spawn_unit(0, "raft", Vector2(930, 1000))
+	var riders = []
+	for i in 4:
+		var r = game.spawn_unit(0, "stinger", Vector2(900, 960 + i * 20))
+		r.cmd_board(raft)
+		riders.append(r)
+	await wait(2.0)
+	check(raft.cargo.size() == 4 and riders[0].carried and not riders[0].visible, "유닛이 뗏목단에 탑승한다")
+	var walls = []
+	for i in 4:
+		var wl = game.spawn_unit(0, "wall", Vector2(900, 960 + i * 20))
+		wl.cmd_board(raft)
+		walls.append(wl)
+	await wait(2.0)
+	var left = walls.filter(func(x): return not x.carried)
+	check(abs(raft.cargo_pop() - 8.0) < 0.01 and left.size() == 1, "탑승 한도는 인구 8 (침병 4기 2 + 방벽 개미 3기 6, 1기는 거절)")
+	for x in left:
+		x.dead = true
+		game.remove_unit(x)
+	raft.cmd_move(Vector2(1040, 1000))
+	Engine.time_scale = 4.0
+	await wait(1.5)
+	Engine.time_scale = 1.0
+	check(T.kind_at(raft.position) == 1, "뗏목단은 물 위로 이동한다")
+	check(not raft.unload() and raft.cargo.size() == 7, "물 한가운데에서는 하선 불가")
+	Engine.time_scale = 4.0
+	var rr = await travel(game, raft, Vector2(1150, 1000), 20.0)
+	Engine.time_scale = 1.0
+	check(rr[0] and rr[1], "뗏목단이 호수를 건너 반대편에 도착한다")
+	check(raft.unload() and raft.cargo.is_empty(), "땅 가까이에서 하선")
+	await wait(0.1)
+	var landed = 0
+	for r in riders:
+		if not r.carried and r.visible and T.passable(r.position, "ground") and r.position.x > 1120.0:
+			landed += 1
+	check(landed == 4, "내린 유닛은 호수 건너편 땅 위에 있다 (%d / 4)" % landed)
+	# 뗏목단이 죽으면 탑승 유닛도 죽는다
+	riders[0].cmd_board(raft)
+	await wait(1.5)
+	var n0 = game.units.size()
+	raft.take_damage(99999.0, null)
+	await wait(0.1)
+	check(not game.units.has(raft) and not game.units.has(riders[0]) and game.units.size() == n0 - 2, "뗏목단이 죽으면 타고 있던 유닛도 죽는다")
+	clear_units(game)
+
 func _initialize():
 	Engine.time_scale = 1.0
 	var game = load("res://scenes/main.tscn").instantiate()

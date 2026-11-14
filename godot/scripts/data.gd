@@ -54,6 +54,21 @@ const SIGHT_BUILDING = 220.0
 const SIGHT_NEST = 300.0
 const DETECT_NEST = 300.0              # 본진은 은신 유닛을 감지한다
 
+# ---- 지형 (4단계) ----
+# [종류, 영역]. 왼쪽 절반만 적고 좌우 대칭으로 복사된다. 종류: 1 물, 2 절벽, 3 수목
+const TREE_SPEED = 0.7                 # 수목 지대에서 지상 유닛 이동 속도 배율
+const TERRAIN = [
+	[1, Rect2(960, 800, 160, 400)],        # 기지와 중앙 사이의 호수: 돌아가거나 뗏목·공중으로 건넌다
+	[2, Rect2(1056, 480, 352, 64)],        # 위쪽 길목을 만드는 절벽
+	[2, Rect2(1056, 1456, 352, 64)],       # 아래쪽 길목을 만드는 절벽
+	[3, Rect2(1376, 736, 128, 128)],       # 중앙 고목 주변 수목
+	[3, Rect2(1376, 1136, 128, 128)],
+	[3, Rect2(160, 1280, 192, 128)],       # 기지 뒤편 수목
+	[3, Rect2(160, 560, 160, 96)],
+]
+const RAFT_CAPACITY = 8.0              # 뗏목단 탑승 한도(인구 기준)
+const BOARD_REACH = 26.0
+
 # reach: 공격 사거리(양쪽 반지름 제외). 30 이하는 근접.
 # batch: 1회 생산 수. 불개미 T1 은 2기 한 조.
 const UNITS = {
@@ -69,6 +84,10 @@ const UNITS = {
 	"tyrant": {"name": "폭군 대병", "food": 250, "mat": 150, "pop": 4.0, "time": 60.0, "tier": 3,
 		"hp": 420.0, "dmg": 22.0, "cd": 1.1, "reach": 6.0, "speed": 70.0, "radius": 11.0, "batch": 1,
 		"needs": "tyrant_blood"},
+	# 뗏목단: 물 위를 다니는 수송 유닛. 고유 진화 "뗏목 진형" 필요
+	"raft": {"name": "뗏목단", "food": 100, "mat": 50, "pop": 3.0, "time": 44.0, "tier": 2,
+		"hp": 220.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 65.0, "radius": 13.0, "batch": 1,
+		"amphibious": true, "needs": "raft_form"},
 	# 보모 개미: 근처에서 아군 침병·병정개미가 죽으면 가까운 생산 건물의 진행도를 앞당긴다
 	"nurse": {"name": "보모 개미", "food": 50, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
 		"hp": 40.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 90.0, "radius": 5.0, "batch": 1},
@@ -104,7 +123,7 @@ const BUILDINGS = {
 	"defense": {"name": "병정 굴", "mat": 150, "time": 30.0, "hp": 750.0, "radius": 30.0,
 		"produces": ["soldier", "wall"]},
 	"special": {"name": "날개 산실", "mat": 200, "time": 40.0, "hp": 550.0, "radius": 30.0,
-		"produces": ["scout", "swarm", "nurse"], "min_tier": 2},
+		"produces": ["scout", "swarm", "nurse", "raft"], "min_tier": 2},
 	"lab": {"name": "독샘 방", "mat": 200, "time": 40.0, "hp": 550.0, "radius": 28.0,
 		"produces": []},
 }
@@ -163,6 +182,8 @@ const RESEARCH = {
 		"tip": "위성 둥지 일꾼 생산 감속 제거. 주 둥지가 파괴되면 계승이 즉시 이루어지고 등급이 떨어지지 않음", "req": "", "group": ""},
 	"alarm": {"name": "경보 페로몬", "cat": "unique", "line": "alarm", "lvl": 1, "tier": 2, "mat": 150, "food": 50, "time": 60.0,
 		"tip": "아군 전투 유닛이 죽으면 주변 아군 공격 속도 +10% (5초, 최대 3중첩)", "req": "", "group": ""},
+	"raft_form": {"name": "뗏목 진형", "cat": "unique", "line": "raft_form", "lvl": 1, "tier": 2, "mat": 150, "food": 0, "time": 60.0,
+		"tip": "뗏목단 생산 가능. 물을 건너 유닛을 실어 나른다", "req": "", "group": ""},
 	"tyrant_blood": {"name": "폭군의 혈통", "cat": "unique", "line": "tyrant_blood", "lvl": 1, "tier": 3, "mat": 250, "food": 0, "time": 90.0,
 		"tip": "폭군 대병 생산 가능", "req": "", "group": ""},
 	"wave": {"name": "[분기] 끝없는 물결", "cat": "unique", "line": "wave", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,

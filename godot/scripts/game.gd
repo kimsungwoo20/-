@@ -9,6 +9,7 @@ const PlayerScript = preload("res://scripts/player.gd")
 const AIScript = preload("res://scripts/ai.gd")
 const HudScript = preload("res://scripts/hud.gd")
 const FogScript = preload("res://scripts/fog.gd")
+const TerrainScript = preload("res://scripts/terrain.gd")
 
 const CELL = 64.0
 const HOTKEYS = [KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B]
@@ -37,6 +38,7 @@ var overlay
 var world
 var decor = []
 var fog
+var terrain
 var fog_t = 0.0
 var camps = []           # {pos, kinds, units, respawn}
 var drop_t = 0.0
@@ -53,6 +55,8 @@ var pan_drag = false
 func _ready():
 	autotest = OS.get_cmdline_user_args().has("--autotest")
 	sandbox = OS.get_cmdline_user_args().has("--sandbox")
+	terrain = TerrainScript.new()
+	terrain.setup()
 	world = Node2D.new()
 	add_child(world)
 	overlay = Node2D.new()
@@ -256,6 +260,11 @@ func spawn_building(pid, kind, pos, finished, main):
 # ---------- 제거 ----------
 
 func remove_unit(u):
+	for cu in u.cargo.duplicate():
+		if is_instance_valid(cu) and not cu.dead:
+			cu.dead = true
+			remove_unit(cu)
+	u.cargo.clear()
 	units.erase(u)
 	if selection.has(u):
 		selection.erase(u)
@@ -318,11 +327,13 @@ func _rebuild_grid():
 				detectors[b.pid] = []
 			detectors[b.pid].append([b.position, Data.DETECT_NEST])
 	for u in units:
-		if u.detect_range() > 0.0:
+		if u.detect_range() > 0.0 and not u.carried:
 			if not detectors.has(u.pid):
 				detectors[u.pid] = []
 			detectors[u.pid].append([u.position, u.detect_range()])
 	for u in units:
+		if u.carried:
+			continue
 		var c = _cell(u.position)
 		if grid.has(c):
 			grid[c].append(u)
@@ -466,6 +477,8 @@ func can_place(kind, pos):
 	for b in buildings:
 		if b.position.distance_to(pos) < r + b.radius + 14.0:
 			return false
+	if not terrain.can_build(pos, r):
+		return false
 	for n in res_nodes:
 		if n.position.distance_to(pos) < r + n.radius + 30.0:
 			return false
@@ -772,10 +785,22 @@ func get_commands():
 				nm += " (위성)"
 			cmds.append({"text": "%s\n재료 %d" % [nm, d2["mat"]], "tip": "지을 자리를 클릭",
 				"enabled": main_tier(human_id) >= d2.get("min_tier", 1), "call": _enter_build.bind(k)})
+	var has_cargo = false
+	for u in sel_units():
+		if u.cargo.size() > 0:
+			has_cargo = true
+	if has_cargo:
+		cmds.append({"text": "하선", "tip": "타고 있는 유닛을 주변 땅에 내린다", "enabled": true, "call": _unload})
 	elif has_root:
 		cmds.append({"text": "거점화 / 해제", "tip": "이동 불가, 받는 피해 60% 감소",
 			"enabled": true, "call": _toggle_root})
 	return cmds
+
+func _unload():
+	for u in sel_units():
+		if u.cargo.size() > 0 and not u.unload():
+			msg("땅 가까이에서만 내릴 수 있습니다")
+	sel_version += 1
 
 func _set_lab_tab(tab):
 	lab_tab = tab
@@ -868,7 +893,7 @@ func _finish_drag(wp):
 	var picked = []
 	var any_army = false
 	for u in units:
-		if u.pid == human_id and rect.has_point(u.position):
+		if u.pid == human_id and not u.carried and rect.has_point(u.position):
 			picked.append(u)
 			if not u.is_worker:
 				any_army = true
@@ -902,6 +927,10 @@ func _right_click(wp):
 			else:
 				rest.append(u)
 		order_move(rest, wp, false)
+	elif e != null and e is UnitScript and e.pid == human_id and e.kind == "raft":
+		for u in us:
+			if u != e:
+				u.cmd_board(e)
 	elif e != null and e is BuildingScript and e.pid == human_id and not e.built:
 		for u in us:
 			if u.is_worker:
@@ -940,7 +969,9 @@ func _process(delta):
 func _update_fog():
 	fog.recompute(self, human_id)
 	for u in units:
-		if u.pid == human_id:
+		if u.carried:
+			u.visible = false
+		elif u.pid == human_id:
 			u.visible = true
 			u.modulate.a = 0.5 if u.stealthed else 1.0
 		else:
@@ -1062,7 +1093,25 @@ func add_shot(a, b, c):
 func _draw():
 	draw_rect(Rect2(Vector2.ZERO, Data.MAP_SIZE), Color(0.36, 0.29, 0.2))
 	for e in decor:
-		draw_circle(e[0], e[1], Color(0.36 + e[2], 0.29 + e[2], 0.2 + e[2]))
+		if terrain.kind_at(e[0]) == TerrainScript.GROUND:
+			draw_circle(e[0], e[1], Color(0.36 + e[2], 0.29 + e[2], 0.2 + e[2]))
+	var cs = Data.FOG_CELL
+	for y in terrain.h:
+		for x in terrain.w:
+			var k = terrain.cells[y * terrain.w + x]
+			if k == TerrainScript.GROUND:
+				continue
+			var r = Rect2(x * cs, y * cs, cs, cs)
+			if k == TerrainScript.TREE:
+				draw_rect(r, Color(0.3, 0.3, 0.17))
+				draw_circle(r.position + Vector2(cs * 0.5, cs * 0.5), cs * 0.55, Color(0.2, 0.4, 0.18, 0.85))
+				draw_circle(r.position + Vector2(cs * 0.3, cs * 0.3), cs * 0.3, Color(0.26, 0.48, 0.22, 0.9))
+			else:
+				draw_rect(r, terrain.color_of(k))
+				if k == TerrainScript.WATER and (x + y) % 3 == 0:
+					draw_line(r.position + Vector2(6, cs * 0.5), r.position + Vector2(cs - 6, cs * 0.5), Color(0.35, 0.55, 0.75), 1.5)
+				if k == TerrainScript.CLIFF:
+					draw_line(r.position + Vector2(4, cs - 4), r.position + Vector2(cs - 4, 4), Color(0.4, 0.37, 0.34), 2.0)
 	for e in expansions:
 		draw_arc(e, 44.0, 0.0, TAU, 32, Color(1, 1, 1, 0.08), 2.0)
 

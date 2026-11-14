@@ -131,6 +131,8 @@ func _complete(it):
 		for i in n:
 			var off = dir.rotated((i - (n - 1) / 2.0) * 0.5) * (radius + 12.0)
 			var u = game.spawn_unit(pid, it["id"], position + off)
+			if not u.air:
+				u.position = game.terrain.nearest_open(u.position, u.layer)
 			if u.is_worker and game.players[pid].is_ai:
 				continue
 			if u.is_worker:
