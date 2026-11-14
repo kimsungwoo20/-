@@ -1,5 +1,6 @@
 extends SceneTree
-# 9단계 점검: 지도, 팀, 승패, 난이도, 방 화면.
+# 9~10단계 점검: 지도, 팀, 승패, 난이도, 방 화면, 인공지능 판단.
+# 주의: 파괴된 건물·유닛을 지역 변수에 든 채로 await 하면 엔진(4.3)이 비정상 종료할 수 있다. 기다리기 전에 변수를 비운다.
 # 실행: godot --headless --path godot -s tests/match.gd   (인공지능과 승패 판정이 필요하므로 --sandbox 없이)
 const Data = preload("res://scripts/data.gd")
 const MapGen = preload("res://scripts/mapgen.gd")
@@ -38,6 +39,11 @@ func slots(fs, teams = null):
 	return out
 
 func _initialize():
+	if OS.get_cmdline_user_args().has("--only-ai"):
+		await ai_checks()
+		print("RESULT fails=%d" % fails)
+		quit(1 if fails > 0 else 0)
+		return
 	# 지도 검증(2~5인)
 	for n in [2, 3, 4, 5]:
 		var L = MapGen.make(n)
@@ -186,12 +192,161 @@ func _initialize():
 	lobby.rows[2]["faction"].select(4)
 	lobby._refresh()
 	check(not lobby.start_btn.disabled, "두 팀이 되면 시작할 수 있다")
-	lobby._start()
-	var cfg = ConfigScript.setup
+	var cfg = lobby.make_setup()
+	lobby.queue_free()
 	check(cfg != null and cfg["mode"] == "team" and cfg["slots"].size() == 3, "시작하면 3자리 팀전 설정이 만들어진다")
 	check(cfg["slots"][2]["faction"] == "trap" and cfg["slots"][2]["diff"] == "hard" and cfg["slots"][2]["team"] == 1, "자리별 진영·난이도·팀이 그대로 넘어간다")
 	check(Data.FACTIONS.has(cfg["slots"][1]["faction"]), "무작위 진영은 실제 진영 하나로 정해진다")
 	ConfigScript.setup = null
 
+	await ai_checks()
+
 	print("RESULT fails=%d" % fails)
 	quit(1 if fails > 0 else 0)
+
+
+func ai_of(g, pid):
+	for ai in g.ais:
+		if ai.pid == pid:
+			return ai
+	return null
+
+# 인공지능 점검: 인공지능 1명의 판단 함수를 직접 불러 확인한다
+func ai_checks():
+	# 전장의 안개
+	var g = await start_game({"mode": "ffa", "slots": slots(["fire", "trap"]), "balance": false})
+	var ai = ai_of(g, 1)
+	ai.t = -99999.0
+	ai._update_knowledge()
+	check(ai.known.is_empty(), "인공지능은 처음에 상대 건물을 모른다(전장의 안개)")
+	var goal = ai.attack_goal(g.main_nest(1))
+	check(goal != null and goal.distance_to(g.layout["starts"][0]) < 1.0, "아는 것이 없으면 상대 시작 위치로 정찰을 간다")
+	var mine = g.spawn_building(0, "combat", Vector2(900, 1000), true, false)
+	ai._update_knowledge()
+	check(not ai.known.has(mine.get_instance_id()), "보지 못한 건물은 모른다")
+	var eye = g.spawn_unit(1, "worker", mine.position + Vector2(80, 0))
+	ai._update_knowledge()
+	check(ai.known.has(mine.get_instance_id()), "시야 안에 들어온 건물은 기억한다")
+	eye.dead = true
+	g.remove_unit(eye)
+	ai._update_knowledge()
+	check(ai.known.has(mine.get_instance_id()), "시야를 잃어도 본 건물은 기억한다")
+	var mine_id = mine.get_instance_id()
+	mine.take_damage(99999.0, null)
+	# 파괴된 객체를 지역 변수에 든 채로 await 하면 엔진이 비정상 종료할 수 있어 미리 비운다
+	mine = null
+	eye = null
+	await wait(0.1)
+	ai._update_knowledge()
+	check(not ai.known.has(mine_id), "파괴된 건물은 잊는다")
+	await end_game(g)
+	# 은폐 건물은 감지해야 안다
+	g = await start_game({"mode": "ffa", "slots": slots(["fire", "trap"]), "balance": false})
+	ai = ai_of(g, 1)
+	ai.t = -99999.0
+	var hidden = g.spawn_building(1, "lab", Vector2(2500, 1300), true, false)
+	g.players[0].is_ai = true
+	var A0 = load("res://scripts/ai.gd").new()
+	A0.setup(g, 0)
+	var peek = g.spawn_unit(0, "stinger", hidden.position + Vector2(90, 0))
+	await wait(0.1)
+	A0._update_knowledge()
+	check(not A0.known.has(hidden.get_instance_id()), "보이는 곳이어도 감지하지 못한 은폐 건물은 모른다")
+	var sc = g.spawn_unit(0, "scout", hidden.position + Vector2(60, 0))
+	await wait(0.1)
+	A0._update_knowledge()
+	check(A0.known.has(hidden.get_instance_id()), "감지하면 은폐 건물도 기억한다")
+	await end_game(g)
+
+	# 인구가 차면 둥지 등급을 올린다
+	g = await start_game({"mode": "ffa", "slots": slots(["fire", "leaf"]), "balance": false})
+	ai = ai_of(g, 1)
+	var L = g.players[1]
+	g.spawn_building(1, "combat", g.main_nest(1).position + Vector2(0, 170), true, false)
+	L.mat = 2000.0
+	L.food = 2000.0
+	var filler = g.spawn_unit(1, "major", g.main_nest(1).position + Vector2(-150, 0))
+	filler.pop = 27.0
+	ai.t = -99999.0
+	await wait(0.1)
+	check(L.pop_used >= L.pop_cap - 3.0, "점검 준비: 인구가 거의 찼다 (%.0f / %.0f)" % [L.pop_used, L.pop_cap])
+	ai.t = 99.0
+	ai.tick(0.0)
+	check(g.main_nest(1).upgrade_t >= 0.0, "인구가 차면 둥지 등급 상승부터 한다")
+	await end_game(g)
+
+	# 지원 유닛과 유인병
+	g = await start_game({"mode": "ffa", "slots": slots(["fire", "trap"]), "balance": false})
+	ai = ai_of(g, 1)
+	var army = []
+	for i in 4:
+		army.append(g.spawn_unit(1, "hunter", Vector2(2000, 1600) + Vector2(i * 15, 0)))
+	var lure = g.spawn_unit(1, "lure", Vector2(2600, 1000))
+	ai._command_support([lure], army, g.main_nest(1))
+	check(lure.state == lure.MOVE and lure.dest.distance_to(Vector2(2022, 1600)) < 40.0, "지원 유닛은 병력 한가운데로 따라간다")
+	lure.position = Vector2(2000, 1600)
+	var enemy = g.spawn_unit(0, "soldier", Vector2(2100, 1600))
+	await wait(0.1)
+	ai._command_support([lure], army, g.main_nest(1))
+	check(lure.lure_cd > 0.0 and enemy.target == lure, "적이 가까이 오면 유인병이 경보 페로몬을 쓴다")
+	await end_game(g)
+
+	# 군대개미 약탈 무리
+	g = await start_game({"mode": "ffa", "slots": slots(["fire", "army"]), "balance": false})
+	ai = ai_of(g, 1)
+	ai.t = -99999.0
+	var rs = []
+	for i in 8:
+		rs.append(g.spawn_unit(1, "raider", Vector2(2600, 1000) + Vector2(0, i * 12)))
+	var rest = ai._raid(rs, g.main_nest(1))
+	check(ai.raiders.size() == 6 and rest.size() == 2, "약탈병 6기를 약탈 무리로 떼어 낸다")
+	check(ai.raiders[0].state == ai.raiders[0].AMOVE and ai.raiders[0].amove_dest.distance_to(g.layout["starts"][0]) < 450.0, "약탈 무리는 상대 기지 쪽으로 간다")
+	await end_game(g)
+
+	# 군대개미 이주: 이주를 시작한 뒤에 완성된 건물이 있어도 끝까지 옮겨 정착한다
+	g = await start_game({"mode": "ffa", "slots": slots(["fire", "army"]), "balance": false})
+	ai = ai_of(g, 1)
+	ai.t = -99999.0
+	var amain = g.main_nest(1)
+	g.spawn_building(1, "combat", amain.position + Vector2(0, 170), true, false)
+	var late = g.spawn_building(1, "defense", amain.position + Vector2(0, -170), false, false)
+	var dest = ai._find_spot("nest", amain.position + Vector2(-350, 0))
+	ai.migrate_to = dest
+	ai.migrating = true
+	ai.migrate_phase = "pack"
+	g.pack_colony(1, true)
+	Engine.time_scale = 8.0
+	var started = g.elapsed
+	var built_late = false
+	while ai.migrating and g.elapsed - started < 150.0:
+		await wait(0.25)
+		if not built_late and g.elapsed - started > 3.0:
+			late.add_build(1000.0)
+			built_late = true
+		ai._nomad(amain)
+	Engine.time_scale = 1.0
+	check(not ai.migrating, "이주가 끝난다 (%.0f초)" % (g.elapsed - started))
+	var all_camp = true
+	for b in g.buildings:
+		if b.pid == 1 and not b.camped():
+			all_camp = false
+	check(all_camp and amain.position.distance_to(dest) < 100.0, "모든 건물이 새 자리에 야영한다(이주 중 완성된 건물 포함)")
+	await end_game(g)
+
+	# 불개미 뗏목 상륙
+	g = await start_game({"mode": "ffa", "slots": slots(["leaf", "fire"]), "balance": false})
+	ai = ai_of(g, 1)
+	ai.t = -99999.0
+	var raft = g.spawn_unit(1, "raft", Vector2(2500, 1000))
+	var st = []
+	for i in 4:
+		st.append(g.spawn_unit(1, "stinger", Vector2(2520, 980 + i * 12)))
+	ai.attacking = true
+	ai._command_raft(raft, st)
+	check(ai.raft_drop != null and st[0].state == st[0].BOARD, "공격을 시작하면 침병이 뗏목단에 탄다")
+	await wait(2.5)
+	check(raft.cargo.size() == 4, "침병 4기 탑승 (%d)" % raft.cargo.size())
+	ai._command_raft(raft, st)
+	await wait(0.1)
+	check(raft.state == raft.MOVE, "뗏목단이 목표로 출발한다")
+	await end_game(g)

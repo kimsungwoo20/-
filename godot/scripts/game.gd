@@ -197,6 +197,16 @@ func _setup_players():
 	np.team = 99
 	players.append(np)
 
+# 이 플레이어의 팀이 지금 그 자리를 보고 있는가(인공지능이 전장의 안개를 따르는 데 쓴다)
+func team_sees(pid, pos):
+	for u in units:
+		if not u.dead and not u.carried and not u.is_neutral and not is_enemy(u.pid, pid) and u.position.distance_to(pos) <= u.sight():
+			return true
+	for b in buildings:
+		if not b.dead and not is_enemy(b.pid, pid) and b.position.distance_to(pos) <= b.sight():
+			return true
+	return false
+
 # 서로 적인가: 다른 팀이면 적. 중립 생물은 모두와 적
 func is_enemy(a, b):
 	return a != b and players[a].team != players[b].team

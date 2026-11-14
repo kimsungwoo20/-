@@ -140,6 +140,10 @@ func _refresh():
 	info.text = t
 
 func _start():
+	ConfigScript.setup = make_setup()
+	get_tree().change_scene_to_file("res://scenes/main.tscn")
+
+func make_setup():
 	var team_mode = mode_btn.selected == 1
 	var slots = []
 	for i in rows.size():
@@ -150,5 +154,4 @@ func _start():
 			f = Data.FACTION_IDS[randi() % Data.FACTION_IDS.size()]
 		slots.append({"type": "human" if i == 0 else "ai", "faction": f,
 			"team": rows[i]["team"].selected, "diff": DIFF_CHOICES[rows[i]["diff"].selected]})
-	ConfigScript.setup = {"mode": "team" if team_mode else "ffa", "slots": slots, "balance": team_mode and balance_chk.button_pressed}
-	get_tree().change_scene_to_file("res://scenes/main.tscn")
+	return {"mode": "team" if team_mode else "ffa", "slots": slots, "balance": team_mode and balance_chk.button_pressed}

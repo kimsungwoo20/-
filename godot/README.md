@@ -2,7 +2,13 @@
 
 `docs/system-design.md` 기획서의 공통 시스템을 옮긴 첫 시제품이다. 고닷 4.3 기준.
 
-## 진영
+## 인공지능
+
+- 전장의 안개를 따른다: 자기 팀이 본 적 있는 적 건물만 기억해 공격하고(은폐 건물은 감지해야 안다), 아는 것이 없으면 상대 시작 위치로 정찰을 간다
+- 인구가 차면 둥지 등급 상승 → 확장 → 군체 확대 연구 순으로 한도를 늘린다
+- 진영별 운영: 불개미 빠른 확장과 뗏목 상륙, 잎꾼개미 정원 조절과 공생균 살포병 동행, 베짜기개미 영역을 이어 붙이는 확장, 함정턱개미 적은 일꾼과 유인병 동행(경보 페로몬), 군대개미 이주(준비 → 이동 → 정착)·본진 옆 위성 둥지·약탈병 무리
+- 리그전: `GODOT=godot tools/tournament.sh` (godot 폴더에서). 결과 기록은 docs/roadmap.md
+
 
 | 진영 | 특징 |
 |---|---|
@@ -43,7 +49,7 @@ godot --headless --path godot --export-release "Web" ../docs/play/index.html
 godot --headless --path godot -s tests/smoke.gd -- --sandbox
 ```
 
-판 점검(2~5인 지도, 팀, 승패, 난이도, 방 화면):
+판 점검(2~5인 지도, 팀, 승패, 난이도, 방 화면, 인공지능 판단):
 
 ```
 godot --headless --path godot -s tests/match.gd

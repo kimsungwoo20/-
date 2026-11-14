@@ -17,30 +17,43 @@ var diff = {}
 # 군대개미 이주
 var migrating = false
 var migrate_to = Vector2.ZERO
+var migrate_phase = "pack"     # pack(행군 준비) / move(이동) / settle(정착)
 var nomad_t = 0.0
+# 전장의 안개: 본 적 있는 적 건물만 안다
+var known = {}           # 건물 instance_id -> [건물 종류, 마지막으로 본 위치]
+var scouted = {}         # 정찰을 마친 시작 위치 번호
+var raiders = []         # 약탈 무리(군대개미)
+var raft_drop = null     # 뗏목 상륙 목표
 # t1/t2/t3: 전투 생산 건물 유닛, def: 방어 생산 건물 유닛, air: 특수 생산 건물 유닛
 # research 의 "branch" 자리에서 분기 진화(둘 중 무작위)를 고른다
 const PLANS = {
+	# 불개미: 빠른 확장과 물량. 뗏목단으로 상륙
 	"fire": {"t1": "stinger", "t2": "sprayer", "t3": "tyrant", "def": "soldier", "air": "swarm",
-		"branches": ["wave", "burn"],
-		"research": ["carry1", "jaw1", "shell1", "spawn1", "colony1", "multiqueen", "alarm", "jaw2",
+		"branches": ["wave", "burn"], "expand_early": true, "raft": true,
+		"research": ["carry1", "jaw1", "shell1", "spawn1", "colony1", "multiqueen", "alarm", "jaw2", "raft_form",
 			"venom1", "shell2", "carry2", "nursery1", "colony2", "gland1", "size1", "tyrant_blood", "branch",
 			"jaw3", "shell3", "troph1", "legs1", "size2", "nursery2", "gland2", "troph2", "flight1", "spawn2", "gland3"]},
+	# 잎꾼개미: 정원으로 경제를 키우고, 공생균 살포병이 병력을 따라다니며 회복
 	"leaf": {"t1": "cutter", "t2": "major", "t3": "supermajor", "def": "minim", "air": "spore",
+		"support": ["medic"],
 		"branches": ["big_garden", "war_fungus"],
 		"research": ["high_yield", "carry1", "jaw1", "shell1", "hitchhiker", "colony1", "spawn1", "jaw2",
 			"shear1", "shell2", "antibiotic", "carry2", "nursery1", "colony2", "size1", "supermajor_caste", "branch",
 			"jaw3", "shell3", "troph1", "legs1", "size2", "nursery2", "troph2", "flight1", "spawn2"]},
+	# 함정턱개미: 일꾼이 적고 정예. 유인병이 병력을 따라다니며 경보 페로몬
 	"trap": {"t1": "hunter", "t2": "leaper", "t3": "king", "def": "guardian", "air": "diver",
-		"branches": ["lone_hunter", "pack"], "max_workers": 20,
+		"branches": ["lone_hunter", "pack"], "max_workers": 20, "support": ["lure"],
 		"research": ["carry1", "jaw1", "shell1", "chain_snap", "colony1", "full_ambush", "jaw2", "power_snap",
 			"shell2", "leap_master", "carry2", "nursery1", "size1", "king_unlock", "branch", "jaw3", "shell3",
 			"size2", "legs1", "nursery2", "flight1", "spawn1", "colony2"]},
+	# 군대개미: 확장 대신 이주. 건물이 인구를 먹으므로 생산 건물은 2동까지, 약탈병 무리로 적 일꾼 습격
 	"army": {"t1": "raider", "t2": "sickle", "t3": "horde", "def": "warden", "air": "drone",
-		"branches": ["eternal_wander", "statary_brood"], "max_workers": 24, "nomad": true,
+		"branches": ["eternal_wander", "statary_brood"], "max_workers": 20, "base_workers": 15, "nomad": true,
+		"max_combat": 2, "raid": true,
 		"research": ["carry1", "jaw1", "shell1", "loot_instinct", "colony1", "great_march", "jaw2", "hook_jaw",
 			"shell2", "spawn1", "carry2", "nursery1", "size1", "predator_wave", "branch", "jaw3", "shell3",
 			"size2", "legs1", "nursery2", "colony2", "living_bridge", "flight1"]},
+	# 베짜기개미: 영역을 이어 확장, 유충 운반공이 병력 뒤에서 건물·네트워크를 받친다
 	"weaver": {"t1": "acid", "t2": "puller", "t3": "lord", "def": "pinner", "air": "airsentry",
 		"branches": ["fortress", "spreading"],
 		"research": ["carry1", "gland1", "shell1", "silk_road", "colony1", "spawn1", "living_chain", "gland2",
@@ -73,6 +86,7 @@ func tick(delta):
 	var main = game.main_nest(pid)
 	if main == null:
 		return
+	_update_knowledge()
 	var workers = []
 	var army = []
 	for u in game.units:
@@ -112,7 +126,7 @@ func tick(delta):
 	var queued = 0
 	for n in nests:
 		queued += n.queue.size()
-	var want = int(min(14 + 6 * (nests.size() - 1), plan.get("max_workers", 40)) * diff["workers"])
+	var want = int(min(plan.get("base_workers", 14) + 6 * (nests.size() - 1), plan.get("max_workers", 40)) * diff["workers"])
 	for n in nests:
 		if workers.size() + queued < want and n.queue.is_empty():
 			if game.enqueue_unit(n, "worker"):
@@ -133,28 +147,48 @@ func tick(delta):
 	var n_def = game.count_buildings(pid, "defense")
 	var n_nest = game.count_buildings(pid, "nest")
 	var n_lab = game.count_buildings(pid, "lab")
-	if unbuilt.is_empty() and workers.size() > 0 and not migrating:
+	var nomad = plan.get("nomad", false)
+	var max_combat = plan.get("max_combat", 6)
+	var capped = p.pop_used >= p.pop_cap - 3.0 and p.pop_cap < game.pop_max
+	var nest_building = unbuilt.any(func(b): return b.kind == "nest")
+	if workers.size() > 0 and not migrating and capped and n_combat > 0:
+		# 인구가 찼다: 둥지 등급 상승 > 확장 > 군체 확대 연구 순으로 한도를 늘린다(짓는 중인 건물이 있어도)
+		if main.tier < 3 and main.upgrade_t < 0.0 and p.mat >= Data.NEST_UPGRADE[main.tier + 1]["mat"]:
+			game.start_upgrade(main)
+		elif nest_building:
+			pass
+		elif nomad and n_nest < 3:
+			# 군대개미: 확장 지점 대신 본진 옆에 위성 둥지(함께 행군한다)
+			_build("nest", main.position, workers)
+		elif not nomad and n_nest < 4:
+			_expand(main, workers)
+		elif lab != null and lab.queue.size() < 2:
+			for id in ["colony1", "colony2"]:
+				if game.research_state(lab, id) == "ok":
+					game.enqueue_research(lab, id)
+					break
+	elif unbuilt.is_empty() and workers.size() > 0 and not migrating:
 		if n_combat == 0:
 			_build("combat", main.position, workers)
-		elif n_nest < 2 and e > 150.0:
+		elif not nomad and n_nest < 2 and e > (100.0 if plan.get("expand_early", false) else 150.0):
 			_expand(main, workers)
 		elif n_def == 0 and e > 200.0:
 			_build("defense", main.position, workers)
-		elif n_lab == 0 and e > 260.0:
+		elif n_lab == 0 and e > (140.0 if nomad else 260.0):
 			_build("lab", main.position, workers)
 		elif main.tier < 2 and e > 320.0:
 			game.start_upgrade(main)
-		elif n_combat < 2 and e > 380.0:
+		elif n_combat < min(2, max_combat) and e > 380.0:
 			_build("combat", main.position, workers)
 		elif main.tier >= 2 and game.count_buildings(pid, "special") == 0 and e > 420.0:
 			_build("special", main.position, workers)
-		elif n_nest < 3 and e > 480.0:
+		elif not nomad and n_nest < 3 and e > 480.0:
 			_expand(main, workers)
-		elif n_combat < 3 and e > 600.0 and p.food > 400.0:
+		elif n_combat < min(3, max_combat) and e > 600.0 and p.food > 400.0:
 			_build("combat", main.position, workers)
 		elif main.tier < 3 and e > 700.0:
 			game.start_upgrade(main)
-		elif n_combat < 6 and p.food > 600.0:
+		elif n_combat < max_combat and p.food > 600.0:
 			# 식량이 남아돌면 생산 건물을 늘려 소비한다
 			_build("combat", main.position, workers)
 
@@ -179,9 +213,22 @@ func tick(delta):
 				game.enqueue_unit(b, plan["t2"])
 			elif p.food >= Data.UNITS[plan["t1"]]["food"]:
 				game.enqueue_unit(b, plan["t1"])
+	var supports = []
+	var rafts = []
+	for u in game.units:
+		if u.pid == pid and not u.is_worker and not u.carried:
+			if plan.get("support", []).has(u.kind):
+				supports.append(u)
+			elif u.kind == "raft":
+				rafts.append(u)
 	for b in specials:
 		if b.queue.is_empty() and p.mat >= 150.0 and p.food >= 150.0:
-			game.enqueue_unit(b, plan["air"])
+			if plan.get("raft", false) and p.has("raft_form") and rafts.is_empty():
+				game.enqueue_unit(b, "raft")
+			elif plan.has("support") and supports.size() < max(1, army.size() / 8):
+				game.enqueue_unit(b, plan["support"][0])
+			else:
+				game.enqueue_unit(b, plan["air"])
 	for b in defenses:
 		if b.queue.is_empty() and p.food >= 160.0:
 			game.enqueue_unit(b, plan["def"])
@@ -192,7 +239,12 @@ func tick(delta):
 
 	if plan.get("nomad", false):
 		_nomad(main)
+	if plan.get("raid", false):
+		army = _raid(army, main)
 	_command_army(army, main)
+	_command_support(supports, army, main)
+	if rafts.size() > 0:
+		_command_raft(rafts[0], army)
 
 # 잎꾼개미: 재료가 넉넉하면 정원사를 늘리고, 바닥나면 줄인다
 func _tend_garden(nests, workers, p):
@@ -201,9 +253,9 @@ func _tend_garden(nests, workers, p):
 		if slots == 0:
 			continue
 		var want = min(slots, int(workers.size() / 3))
-		if p.mat < 30.0 and n.gardeners.size() > 0:
+		if (p.mat < 30.0 or p.food > 1500.0) and n.gardeners.size() > 0:
 			n.release_gardener()
-		elif p.mat > 120.0 and n.gardeners.size() < want:
+		elif p.mat > 120.0 and p.food < 1000.0 and n.gardeners.size() < want:
 			var going = 0
 			for w in workers:
 				if w.state == UnitScript.GARDEN:
@@ -323,19 +375,11 @@ func _command_army(army, main):
 		attacking = false
 		wave_size = min(wave_size + 5, 50)
 	if attacking:
-		var tgt = null
-		var bd = 1e12
-		for b in game.buildings:
-			# 감지하지 못한 은폐 건물은 공격 목표로 삼지 않는다
-			if game.is_enemy(b.pid, pid) and not b.dead and not (b.stealthed and not game.is_detected(b, pid)):
-				var dd = b.position.distance_squared_to(main.position)
-				if dd < bd:
-					bd = dd
-					tgt = b
-		if tgt != null:
+		var goal = attack_goal(main)
+		if goal != null:
 			for u in army:
-				if u.state == UnitScript.IDLE:
-					u.cmd_amove(tgt.position)
+				if u.state == UnitScript.IDLE or (u.state == UnitScript.AMOVE and u.amove_dest.distance_to(goal) > 200.0):
+					u.cmd_amove(goal)
 	else:
 		# 군대개미: 가까운 진딧물 군락을 도살해 식량을 얻는다
 		if plan.get("nomad", false) and army.size() >= 4:
@@ -377,27 +421,26 @@ func _nearest_prey(pos):
 # 군대개미: 둥지 주변의 식량(씨앗·사체)이 떨어지면 군체 전체가 다음 식량 근처로 옮긴다
 func _nomad(main):
 	if migrating:
-		var moving = false
-		var all_marching = true
-		for b in game.buildings:
-			if b.pid != pid or not b.built:
-				continue
-			if b.mode != "camp":
-				moving = true
-			if b.mode != "march":
-				all_marching = false
-		if not moving:
-			migrating = false
-			return
-		if all_marching:
-			if main.position.distance_to(migrate_to) > 70.0:
-				if main.march_dest == null:
-					game.order_march(main, migrate_to)
-			else:
-				# 도착: 야영. 자리가 안 맞는 건물은 조금 옮겨서 다시 시도한다
-				for b in game.buildings:
-					if b.pid == pid and b.mode == "march" and b.march_dest == null and not b.unpack():
-						b.march_to(b.position + Vector2(70, 0).rotated(randf() * TAU))
+		var mine = game.buildings.filter(func(b): return b.pid == pid and b.built)
+		if migrate_phase == "pack":
+			# 이주 중에 완성된 건물도 함께 행군 준비. 모두 행군 상태가 되면 출발
+			for b in mine:
+				if b.mode == "camp":
+					b.pack()
+			if mine.all(func(b): return b.mode == "march"):
+				migrate_phase = "move"
+				game.order_march(main, migrate_to)
+		elif migrate_phase == "move":
+			if main.position.distance_to(migrate_to) <= 70.0 or main.march_dest == null:
+				migrate_phase = "settle"
+				game.pack_colony(pid, false)
+		else:
+			# 정착: 자리가 안 맞아 야영하지 못한 건물은 조금 옮겨서 다시 시도한다
+			for b in mine:
+				if b.mode == "march" and b.march_dest == null and not b.unpack():
+					b.march_to(b.position + Vector2(70, 0).rotated(randf() * TAU))
+			if mine.all(func(b): return b.mode == "camp"):
+				migrating = false
 		return
 	nomad_t -= diff["tick"]
 	if nomad_t > 0.0 or game.elapsed < 200.0 or attacking or defend_t > 0.0:
@@ -419,4 +462,146 @@ func _nomad(main):
 		return
 	migrate_to = spot
 	migrating = true
+	migrate_phase = "pack"
 	game.pack_colony(pid, true)
+
+
+# ---------- 전장의 안개: 본 것만 안다 ----------
+
+func _update_knowledge():
+	# 건물 객체 대신 고유 번호로 기억한다(파괴된 뒤에도 안전하게)
+	for id in known.keys():
+		var b = instance_from_id(id)
+		if b == null or b.dead:
+			known.erase(id)
+		elif game.team_sees(pid, known[id][1]) and not _can_see_building(b):
+			# 기억한 자리에 가 보니 없다(군대개미 건물이 옮겨 갔거나 은폐)
+			known.erase(id)
+	for b in game.buildings:
+		if game.is_enemy(b.pid, pid) and not b.dead and _can_see_building(b):
+			known[b.get_instance_id()] = [b.kind, b.position]
+	var starts = game.layout["starts"]
+	for i in starts.size():
+		if game.team_sees(pid, starts[i]):
+			scouted[i] = true
+
+func _can_see_building(b):
+	if not game.team_sees(pid, b.position):
+		return false
+	return not b.stealthed or game.is_detected(b, pid)
+
+# 공격할 곳: 본 적 있는 가장 가까운 적 건물. 아무것도 모르면 아직 못 가 본 시작 위치(정찰)
+func attack_goal(main):
+	var best = null
+	var bd = 1e12
+	for id in known:
+		var pos = known[id][1]
+		var dd = pos.distance_squared_to(main.position)
+		if dd < bd:
+			bd = dd
+			best = pos
+	if best != null:
+		return best
+	var starts = game.layout["starts"]
+	for i in starts.size():
+		if i == pid or scouted.has(i):
+			continue
+		var dd = starts[i].distance_squared_to(main.position)
+		if dd < bd:
+			bd = dd
+			best = starts[i]
+	if best == null and game.expansions.size() > 0:
+		best = game.expansions[randi() % game.expansions.size()]
+		scouted.clear()
+	return best
+
+# ---------- 지원 유닛: 병력 뒤를 따라다닌다 ----------
+
+func _command_support(supports, army, main):
+	if supports.is_empty():
+		return
+	var center = main.position
+	if army.size() > 0:
+		center = Vector2.ZERO
+		for u in army:
+			center += u.position
+		center /= army.size()
+	for s in supports:
+		if s.position.distance_to(center) > 120.0 and (s.state == UnitScript.IDLE or s.state == UnitScript.MOVE):
+			s.cmd_move(center)
+		# 유인병: 적이 가까이 오면 경보 페로몬
+		if s.d.get("lure", false) and s.lure_cd <= 0.0:
+			if game.find_enemy_unit(s.position, pid, Data.LURE_RADIUS * 0.8) != null:
+				game.use_lure(s)
+
+# ---------- 군대개미: 약탈 무리 ----------
+
+# 약탈병 일부를 본대에서 떼어 적 일꾼을 습격한다. 남은 본대를 돌려준다
+func _raid(army, main):
+	raiders = raiders.filter(func(u): return is_instance_valid(u) and not u.dead)
+	if raiders.size() < 3:
+		for u in raiders:
+			u.cmd_move(main.position)
+		raiders.clear()
+	var free = army.filter(func(u): return u.kind == plan["t1"] and not raiders.has(u))
+	if raiders.is_empty() and free.size() >= 6:
+		raiders = free.slice(0, 6)
+	if raiders.is_empty():
+		return army
+	var goal = _raid_goal(main)
+	if goal != null:
+		for u in raiders:
+			if u.state == UnitScript.IDLE or (u.state == UnitScript.AMOVE and u.amove_dest.distance_to(goal) > 150.0):
+				u.cmd_amove(goal)
+	return army.filter(func(u): return not raiders.has(u))
+
+# 약탈 목표: 본 적 있는 적 둥지 옆의 자원 지점(일꾼이 모이는 곳)
+func _raid_goal(main):
+	var best = null
+	var bd = 1e12
+	for id in known:
+		if known[id][0] != "nest":
+			continue
+		var dd = known[id][1].distance_squared_to(main.position)
+		if dd < bd:
+			bd = dd
+			best = known[id][1]
+	if best == null:
+		return attack_goal(main)
+	var n = game.nearest_node(best, "food", null, -1)
+	return n.position if n != null and n.position.distance_to(best) < 400.0 else best
+
+# ---------- 불개미: 뗏목 상륙 ----------
+
+# 공격을 시작하면 침병을 태우고 물·땅을 가로질러 곧장 목표 근처에 내린다
+func _command_raft(raft, army):
+	if raft.state != UnitScript.IDLE and raft.state != UnitScript.MOVE:
+		return
+	if not attacking:
+		raft_drop = null
+		if raft.cargo.size() > 0:
+			raft.unload()
+		return
+	var main = game.main_nest(pid)
+	if raft_drop == null:
+		raft_drop = attack_goal(main)
+		if raft_drop == null:
+			return
+		var room = Data.RAFT_CAPACITY - raft.cargo_pop()
+		for u in army:
+			if u.kind == plan["t1"] and u.pop <= room and u.position.distance_to(raft.position) < 400.0:
+				u.cmd_board(raft)
+				room -= u.pop
+		return
+	if raft.cargo.is_empty():
+		return
+	if raft.position.distance_to(raft_drop) > 220.0:
+		if raft.state == UnitScript.IDLE:
+			raft.cmd_move(raft_drop)
+	else:
+		var landed = raft.cargo.duplicate()
+		if raft.unload():
+			for u in landed:
+				u.cmd_amove(raft_drop)
+			raft.cmd_move(main.position)
+			raft_drop = null
