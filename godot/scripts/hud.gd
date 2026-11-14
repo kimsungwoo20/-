@@ -24,6 +24,7 @@ func setup(g):
 	root = Control.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.theme = preload("res://scripts/ui_theme.gd").make()
 	add_child(root)
 
 	top_label = _label(16)
@@ -47,11 +48,6 @@ func setup(g):
 	panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	panel.offset_top = -150
 	panel.offset_bottom = 0
-	var sb = StyleBoxFlat.new()
-	sb.bg_color = Color(0.13, 0.1, 0.08, 0.95)
-	sb.border_color = Color(0.4, 0.3, 0.2)
-	sb.border_width_top = 2
-	panel.add_theme_stylebox_override("panel", sb)
 	root.add_child(panel)
 
 	var mm = Minimap.new()
@@ -89,6 +85,7 @@ func show_msg(text):
 func show_game_over(won):
 	if over_panel != null:
 		return
+	game.play("win" if won else "lose")
 	over_panel = Panel.new()
 	over_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	over_panel.offset_left = -180

@@ -63,6 +63,7 @@ func _option(items, selected):
 
 func _build():
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	theme = preload("res://scripts/ui_theme.gd").make()
 	var bg = ColorRect.new()
 	bg.color = Color(0.12, 0.1, 0.07)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)

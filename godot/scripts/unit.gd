@@ -1,5 +1,6 @@
 extends Node2D
 const Data = preload("res://scripts/data.gd")
+const Art = preload("res://scripts/art.gd")
 
 enum {IDLE, MOVE, AMOVE, ATTACK, GATHER, RETURN, BUILD, BOARD, GARDEN}
 
@@ -68,6 +69,8 @@ var fac = {}             # 소속 진영 데이터
 var nid = 0              # 고유 번호(방장과 참가자가 같은 개체를 가리킬 때 쓴다)
 var net_pos = Vector2.ZERO
 var net_extra = 0.0
+var walk_t = 0.0          # 걷기 동작(다리 흔들기)
+var prev_pos = Vector2.ZERO
 var dead = false
 var selected = false
 var facing = 0.0
@@ -341,10 +344,14 @@ func _physics_process(delta):
 			position = net_pos
 		else:
 			position = position.lerp(net_pos, min(1.0, delta * 12.0))
+		walk_t += min(position.distance_to(prev_pos), 20.0) * 0.35
+		prev_pos = position
 		queue_redraw()
 		return
 	if dead or carried:
 		return
+	walk_t += min(position.distance_to(prev_pos), 20.0) * 0.35
+	prev_pos = position
 	if cargo.size() > 0:
 		for u in cargo:
 			u.position = position
@@ -541,6 +548,9 @@ func _do_attack(delta):
 			var tpos = target.position
 			if p.has("hook_jaw") and not is_worker and target.get("hook_t") != null:
 				target.hook_t = Data.HOOK_TIME
+			if not is_neutral or game.fog.is_visible_at(position):
+				game.play("snap" if snapped else ("spit" if d["reach"] > 30.0 else "bite"), position)
+				game.add_effect(tpos, "hit", Color(1.0, 1.0, 0.6) if snapped else (Color(0.8, 1.0, 0.3) if d["reach"] > 30.0 else Color(1, 1, 1)))
 			target.take_damage(dmg, self)
 			if not is_worker and _valid(target):
 				target.add_venom(p.venom_cap(), p.has("burn"))
@@ -731,6 +741,13 @@ func take_damage(amount, attacker):
 func _draw_neutral(c):
 	var r = radius
 	draw_set_transform(Vector2.ZERO, facing, Vector2.ONE)
+	Art.draw_neutral(self, kind, r, Color(0.5, 0.55, 0.3) if kind != "grub" else c, walk_t)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if hp < max_hp:
+		var w0 = r * 2.4
+		draw_rect(Rect2(-w0 / 2.0, -r - 8.0, w0, 3.0), Color(0, 0, 0, 0.6))
+		draw_rect(Rect2(-w0 / 2.0, -r - 8.0, w0 * clamp(hp / max_hp, 0.0, 1.0), 3.0), Color(0.9, 0.8, 0.3))
+	return
 	for i in 3:
 		var x = (i - 1) * r * 0.5
 		draw_line(Vector2(x, -r * 1.1), Vector2(x, r * 1.1), c.darkened(0.4), 1.5)
@@ -906,28 +923,20 @@ func _draw():
 	if snap_ready() and not is_neutral:
 		draw_circle(Vector2(r + 3.0, 0).rotated(facing), 2.0, Color(1.0, 0.9, 0.3, 0.9))
 	draw_set_transform(Vector2.ZERO, facing, Vector2.ONE)
+	var faction = game.players[pid].faction
+	if kind == "horde":
+		Art.draw_horde(self, r, c, faction, walk_t, facing)
+	elif kind != "raft":
+		Art.draw_ant(self, r * 0.85, c, faction, kind, walk_t, is_worker)
 	if air:
-		draw_circle(Vector2(-r * 0.2, -r * 0.9), r * 0.7, Color(1, 1, 1, 0.45))
-		draw_circle(Vector2(-r * 0.2, r * 0.9), r * 0.7, Color(1, 1, 1, 0.45))
-	draw_circle(Vector2(-r * 0.9, 0), r * 0.75, c.darkened(0.3))
-	draw_circle(Vector2.ZERO, r * 0.5, c)
-	if kind in ["soldier", "major", "supermajor", "gate"]:
-		draw_circle(Vector2(r * 0.85, 0), r * 0.75, c.lightened(0.1))
-		if kind != "soldier":
-			draw_line(Vector2(r * 1.4, -r * 0.4), Vector2(r * 1.9, -r * 0.1), c.lightened(0.3), 2.0)
-			draw_line(Vector2(r * 1.4, r * 0.4), Vector2(r * 1.9, r * 0.1), c.lightened(0.3), 2.0)
-	else:
-		draw_circle(Vector2(r * 0.8, 0), r * 0.55, c.lightened(0.15))
-	if kind == "sprayer":
-		draw_circle(Vector2(-r * 0.9, 0), r * 0.4, Color(0.8, 1.0, 0.3))
-	if kind == "medic" or kind == "spore":
-		draw_circle(Vector2(-r * 0.9, 0), r * 0.4, Color(0.75, 0.9, 0.55))
-	if kind == "cutter":
-		draw_circle(Vector2(r * 0.2, -r * 0.9), r * 0.45, Color(0.35, 0.7, 0.3))
-	if is_worker:
-		draw_circle(Vector2.ZERO, r * 0.25, Color(1, 1, 1, 0.7))
+		# 날개: 펄럭인다
+		var flap = 0.75 + 0.25 * sin(game.elapsed * 30.0 + nid)
+		Art.oval(self, Vector2(-r * 0.3, -r * 0.8 * flap), r * 0.7, r * 0.32, Color(1, 1, 1, 0.45))
+		Art.oval(self, Vector2(-r * 0.3, r * 0.8 * flap), r * 0.7, r * 0.32, Color(1, 1, 1, 0.45))
 	if kind == "porter":
-		draw_rect(Rect2(-r * 0.5, -r * 0.5, r, r), Color(0.9, 0.8, 0.5))
+		draw_rect(Rect2(-r * 1.3, -r * 0.45, r * 0.8, r * 0.9), Color(0.9, 0.8, 0.5))
+	if kind == "cutter":
+		draw_colored_polygon(PackedVector2Array([Vector2(r * 0.9, 0), Vector2(r * 0.3, -r * 1.3), Vector2(-r * 0.2, -r * 0.4)]), Color(0.35, 0.7, 0.3))
 	if bridge_r > 0.0:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		draw_arc(Vector2.ZERO, bridge_r, 0.0, TAU, 40, Color(0.75, 0.6, 0.35, 0.6), 2.0)
@@ -938,10 +947,7 @@ func _draw():
 		for i in max(cargo.size(), int(net_extra)):
 			draw_circle(Vector2(r * 0.55, 0).rotated(i * TAU / 8.0), 2.0, c.lightened(0.3))
 	if carry > 0.0:
-		var cc = Data.FOOD_COLOR
-		if carry_res == "mat":
-			cc = Data.MAT_COLOR
-		draw_circle(Vector2(r * 1.6, 0), 3.0, cc)
+		Art.draw_carry(self, r * 0.85, carry_res, game.players[pid].faction)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if shield > 0.0:
 		draw_arc(Vector2.ZERO, radius + 4.0, 0.0, TAU, 20, Color(0.75, 0.9, 0.55, 0.8), 2.0)

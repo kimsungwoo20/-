@@ -1,5 +1,6 @@
 extends Node2D
 const Data = preload("res://scripts/data.gd")
+const Art = preload("res://scripts/art.gd")
 
 var game
 var kind = ""
@@ -127,13 +128,7 @@ func _process(delta):
 	queue_redraw()
 
 func _draw():
-	var c = d["color"]
-	if dormant > 0.0 or dead:
-		c = c.darkened(0.6)
-	draw_circle(Vector2.ZERO, radius, c.darkened(0.35))
-	draw_circle(Vector2(-radius * 0.3, -radius * 0.2), radius * 0.55, c)
-	draw_circle(Vector2(radius * 0.35, radius * 0.25), radius * 0.45, c.lightened(0.1))
-	draw_circle(Vector2(radius * 0.1, -radius * 0.45), radius * 0.3, c.lightened(0.2))
+	Art.draw_node(self, self, game.elapsed)
 	var txt = d["name"]
 	if dead:
 		txt += " (도살됨, %d초)" % int(ceil(slain_t))

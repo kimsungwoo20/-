@@ -1,5 +1,6 @@
 extends Node2D
 const Data = preload("res://scripts/data.gd")
+const Art = preload("res://scripts/art.gd")
 
 var game
 var pid = 0
@@ -220,6 +221,8 @@ func add_build(delta):
 	hp = min(max_hp, hp + max_hp * 0.9 * delta / d["time"])
 	if build_progress >= d["time"]:
 		built = true
+		if game.controls(pid):
+			game.play("built")
 		game.on_building_done(self)
 
 func add_venom(cap, burn):
@@ -305,6 +308,8 @@ func _physics_process(delta):
 func _complete(it):
 	if it["type"] == "unit":
 		reserved_pop = 0.0
+		if game.controls(pid):
+			game.play("ready")
 		var dir = (rally_pos - position).normalized()
 		if dir == Vector2.ZERO:
 			dir = Vector2.RIGHT
@@ -387,31 +392,15 @@ func _draw():
 			draw_arc(Vector2.ZERO, radius + 9.0, -PI / 2.0, -PI / 2.0 + TAU * (1.0 - mode_t / total), 24, Color(1.0, 0.8, 0.3), 2.5)
 		if march_dest != null and selected:
 			draw_line(Vector2.ZERO, march_dest - position, Color(1, 1, 1, 0.35), 1.0)
-	var base = Color(0.3, 0.22, 0.14, a)
-	draw_circle(Vector2.ZERO, radius, base)
-	draw_circle(Vector2.ZERO, radius * 0.78, Color(c.r, c.g, c.b, a).darkened(0.35))
-	match kind:
-		"nest":
-			draw_circle(Vector2.ZERO, radius * 0.45, Color(c.r, c.g, c.b, a))
-			draw_circle(Vector2.ZERO, radius * 0.2, Color(0.1, 0.07, 0.05, a))
-			if is_main:
-				for i in tier:
-					draw_circle(Vector2(-10 + i * 10, -radius - 8.0), 3.5, Color(1.0, 0.9, 0.3))
-			var gs = garden_slots()
-			for i in gs:
-				var col = Color(0.85, 0.9, 0.7, a) if i < garden_count() else Color(0.3, 0.35, 0.25, a)
-				draw_circle(Vector2(radius * 0.62, 0).rotated(i * TAU / gs), 3.0, col)
-		"combat":
-			for i in 3:
-				draw_circle(Vector2(radius * 0.4, 0).rotated(i * TAU / 3.0), radius * 0.22, Color(c.r, c.g, c.b, a))
-		"defense":
-			draw_rect(Rect2(-radius * 0.4, -radius * 0.4, radius * 0.8, radius * 0.8), Color(c.r, c.g, c.b, a))
-		"lab":
-			draw_circle(Vector2.ZERO, radius * 0.4, Color(0.8, 1.0, 0.3, a))
-		"special":
-			draw_circle(Vector2(0, -radius * 0.3), radius * 0.3, Color(1, 1, 1, 0.6 * a))
-			draw_circle(Vector2(0, radius * 0.3), radius * 0.3, Color(1, 1, 1, 0.6 * a))
-			draw_circle(Vector2.ZERO, radius * 0.2, Color(c.r, c.g, c.b, a))
+	Art.draw_building(self, self, c, game.players[pid].faction, a, game.elapsed)
+	if kind == "nest":
+		if is_main:
+			for i in tier:
+				draw_circle(Vector2(-10 + i * 10, -radius - 8.0), 3.5, Color(1.0, 0.9, 0.3))
+		var gs = garden_slots()
+		for i in gs:
+			var col = Color(0.85, 0.9, 0.7, a) if i < garden_count() else Color(0.3, 0.35, 0.25, a)
+			draw_circle(Vector2(radius * 0.72, 0).rotated(i * TAU / gs), 3.0, col)
 	var font = ThemeDB.fallback_font
 	draw_string(font, Vector2(-80, radius + 16.0), d["name"], HORIZONTAL_ALIGNMENT_CENTER, 160, 12, Color(1, 1, 1, 0.85))
 	var w = radius * 2.0

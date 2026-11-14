@@ -12,6 +12,7 @@ const FogScript = preload("res://scripts/fog.gd")
 const TerrainScript = preload("res://scripts/terrain.gd")
 const ConfigScript = preload("res://scripts/config.gd")
 const MapGen = preload("res://scripts/mapgen.gd")
+const SfxScript = preload("res://scripts/sfx.gd")
 
 const CELL = 64.0
 const HOTKEYS = [KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B]
@@ -68,6 +69,11 @@ var snap_t = 0.0
 var net_research_ver = {}
 var lost_shown = false
 var camera_set = false
+# ---- 그림과 소리 ----
+var sfx
+var effects = []         # [위치, 남은 시간, 종류, 색]
+var pings = []           # 미니맵 경고 표시: [위치, 남은 시간]
+var alarm_t = -99.0
 
 var build_mode = ""
 var lab_tab = "body"
@@ -103,6 +109,8 @@ func _ready():
 	fog.z_index = 30
 	add_child(fog)
 	fog.setup()
+	sfx = SfxScript.new()
+	add_child(sfx)
 	camera = Camera2D.new()
 	add_child(camera)
 	camera.make_current()
@@ -424,6 +432,11 @@ func on_building_done(_b):
 	sel_version += 1
 
 func notify_attacked(b):
+	if controls(b.pid) and not autotest and elapsed - alarm_t > 10.0:
+		alarm_t = elapsed
+		msg("%s 이(가) 공격받고 있습니다" % b.d["name"])
+		play("alarm")
+		pings.append([b.position, 3.0])
 	for ai in ais:
 		if ai.pid == b.pid:
 			ai.on_attacked(b)
@@ -928,6 +941,7 @@ func _say(pid, text):
 		return
 	if pid == human_id or controlled.has(pid):
 		msg(text)
+		play("error")
 	elif net_role == "host":
 		get_node("/root/Net").send_msg(pid, text)
 
@@ -1066,8 +1080,11 @@ func on_research_done(pid, id):
 				u.refresh_hp()
 	if pid == human_id and not autotest:
 		msg("연구 완료: %s" % Data.RESEARCH[id]["name"])
+		play("research")
 
 func on_unit_death(u):
+	play("death", u.position)
+	add_effect(u.position, "death", players[u.pid].color if not u.is_neutral else Color(0.6, 0.6, 0.4))
 	if u.is_neutral:
 		spawn_corpse(u.position, u.d["corpse"])
 		return
@@ -1424,6 +1441,9 @@ func _unhandled_input(ev):
 			build_mode = ""
 		elif ev.keycode == KEY_S and has_units:
 			act("stop", [sel_units()])
+		elif ev.keycode == KEY_M:
+			SfxScript.muted = not SfxScript.muted
+			msg("소리 끔" if SfxScript.muted else "소리 켬")
 		elif ev.keycode == KEY_ESCAPE:
 			if build_mode != "" or amove_armed:
 				build_mode = ""
@@ -1444,6 +1464,7 @@ func _finish_drag(wp):
 		var e = _entity_at(wp)
 		if e != null and (e is UnitScript or e is BuildingScript) and controls(e.pid):
 			set_selection([e])
+			play("select")
 		else:
 			set_selection([])
 		return
@@ -1457,6 +1478,8 @@ func _finish_drag(wp):
 	if any_army:
 		picked = picked.filter(func(u): return not u.is_worker)
 	set_selection(picked)
+	if picked.size() > 0:
+		play("select")
 
 func _right_click(wp):
 	var e = _entity_at(wp)
@@ -1529,6 +1552,12 @@ func _process(delta):
 	for s in shots:
 		s[2] -= delta
 	shots = shots.filter(func(s): return s[2] > 0.0)
+	for e in effects:
+		e[1] -= delta
+	effects = effects.filter(func(e): return e[1] > 0.0)
+	for pg in pings:
+		pg[1] -= real
+	pings = pings.filter(func(pg): return pg[1] > 0.0)
 	fog_t -= real
 	if fog_t <= 0.0:
 		fog_t = 0.15
@@ -1706,12 +1735,24 @@ func _draw():
 				draw_rect(r, Color(0.3, 0.3, 0.17))
 				draw_circle(r.position + Vector2(cs * 0.5, cs * 0.5), cs * 0.55, Color(0.2, 0.4, 0.18, 0.85))
 				draw_circle(r.position + Vector2(cs * 0.3, cs * 0.3), cs * 0.3, Color(0.26, 0.48, 0.22, 0.9))
+			elif k == TerrainScript.WATER:
+				# 물: 물가(땅과 닿은 칸)는 밝게, 가운데는 짙게
+				var shore = false
+				for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+					var nx = x + dd.x
+					var ny = y + dd.y
+					if nx >= 0 and ny >= 0 and nx < terrain.w and ny < terrain.h and terrain.cells[ny * terrain.w + nx] != TerrainScript.WATER:
+						shore = true
+				draw_rect(r, Color(0.25, 0.47, 0.62) if shore else Color(0.17, 0.35, 0.52))
+				if (x * 7 + y * 3) % 5 == 0:
+					draw_arc(r.position + Vector2(cs * 0.5, cs * 0.55), cs * 0.25, PI * 1.15, PI * 1.85, 6, Color(0.55, 0.75, 0.9, 0.6), 1.2)
 			else:
-				draw_rect(r, terrain.color_of(k))
-				if k == TerrainScript.WATER and (x + y) % 3 == 0:
-					draw_line(r.position + Vector2(6, cs * 0.5), r.position + Vector2(cs - 6, cs * 0.5), Color(0.35, 0.55, 0.75), 1.5)
-				if k == TerrainScript.CLIFF:
-					draw_line(r.position + Vector2(4, cs - 4), r.position + Vector2(cs - 4, 4), Color(0.4, 0.37, 0.34), 2.0)
+				# 절벽: 바위 덩어리
+				draw_rect(r, Color(0.27, 0.25, 0.24))
+				var h = (x * 13 + y * 7) % 4
+				draw_circle(r.position + Vector2(cs * (0.3 + 0.1 * h), cs * 0.4), cs * 0.32, Color(0.36, 0.34, 0.32))
+				draw_circle(r.position + Vector2(cs * 0.7, cs * (0.65 - 0.05 * h)), cs * 0.26, Color(0.31, 0.29, 0.28))
+				draw_arc(r.position + Vector2(cs * (0.3 + 0.1 * h), cs * 0.4), cs * 0.32, PI * 1.1, PI * 1.6, 5, Color(0.5, 0.48, 0.45), 1.5)
 	for e in expansions:
 		draw_arc(e, 44.0, 0.0, TAU, 32, Color(1, 1, 1, 0.08), 2.0)
 
@@ -1722,6 +1763,15 @@ func _draw_overlay():
 	for z in spore_zones:
 		if fog.is_visible_at(z[0]):
 			overlay.draw_circle(z[0], Data.SPORE_ZONE_RADIUS, Color(0.7, 0.85, 0.4, 0.25 * clamp(z[1], 0.0, 1.0)))
+	for e in effects:
+		var k = e[1] / 0.5
+		if e[2] == "death":
+			# 흩어지는 조각
+			for i in 6:
+				var dir = Vector2(cos(i * 1.05 + e[0].x), sin(i * 1.05 + e[0].y))
+				overlay.draw_circle(e[0] + dir * (1.0 - k) * 18.0, 2.2 * k + 0.5, Color(e[3].r, e[3].g, e[3].b, k))
+		else:
+			overlay.draw_circle(e[0], 3.0 + (1.0 - k) * 6.0, Color(e[3].r, e[3].g, e[3].b, k * 0.8))
 	for s in shots:
 		if fog.is_visible_at(s[0]) or fog.is_visible_at(s[1]):
 			overlay.draw_line(s[0], s[1], s[3], 2.0)
@@ -1745,7 +1795,18 @@ func _draw_overlay():
 # ---------- 명령 통로 ----------
 # 사람의 모든 명령은 여기를 거친다. 참가자 화면에서는 방장에게 보내고, 방장·혼자 하기에서는 바로 실행한다.
 
+func play(name, pos = null):
+	if sfx != null and not autotest:
+		sfx.play(name, pos, camera if pos != null else null)
+
+func add_effect(pos, kind, col):
+	if autotest or not fog.is_visible_at(pos):
+		return
+	effects.append([pos, 0.5, kind, col])
+
 func act(name, args = []):
+	if name in ["move", "stop", "rclick", "build", "enqueue", "research", "upgrade", "root", "unload", "lure", "pack", "unpack", "pack_all", "camp_all", "garden_add", "garden_out", "fungus"]:
+		play("order")
 	if net_role == "client":
 		get_node("/root/Net").send_cmd(name, _encode(args))
 		return
@@ -1983,6 +2044,9 @@ func apply_snapshot(s):
 		var u = ents.get(nid)
 		if u == null or not is_instance_valid(u):
 			u = spawn_unit(pid, kind, pos, nid)
+			u.prev_pos = pos
+			if controls(pid) and camera_set:
+				play("ready")
 		u.net_pos = pos
 		u.facing = uf[i + 5]
 		u.hp = uf[i + 6]
@@ -2020,6 +2084,11 @@ func apply_snapshot(s):
 		if b == null or not is_instance_valid(b):
 			b = spawn_building(pid, kind, pos, (f & 1) != 0, (f & 2) != 0, nid)
 		b.position = pos
+		if controls(pid) and camera_set:
+			if bf[i + 5] < b.hp - 0.5:
+				notify_attacked(b)
+			if not b.built and (f & 1) != 0:
+				play("built")
 		b.hp = bf[i + 5]
 		b.max_hp = bf[i + 6]
 		b.built = (f & 1) != 0
@@ -2057,6 +2126,9 @@ func apply_snapshot(s):
 			var e = ents[nid]
 			ents.erase(nid)
 			if is_instance_valid(e):
+				if e is UnitScript and e.visible and not e.carried:
+					play("death", e.position)
+					add_effect(e.position, "death", players[e.pid].color if not e.is_neutral else Color(0.6, 0.6, 0.4))
 				units.erase(e)
 				buildings.erase(e)
 				res_nodes.erase(e)
@@ -2077,6 +2149,8 @@ func apply_snapshot(s):
 		var r = {}
 		for id in d[7]:
 			r[id] = true
+		if i == human_id and r.size() > p.research.size() and camera_set:
+			play("research")
 		p.research = r
 		p.is_ai = d[8]
 	zones = []

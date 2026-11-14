@@ -29,6 +29,9 @@ func _draw():
 		if u.visible:
 			draw_rect(Rect2(u.position * s - Vector2(1, 1), Vector2(2, 2)), game.players[u.pid].color.lightened(0.3))
 	draw_texture_rect(game.fog.tex, Rect2(Vector2.ZERO, size), false)
+	for pg in game.pings:
+		var k = fmod(pg[1], 1.0)
+		draw_arc(pg[0] * s, 4.0 + (1.0 - k) * 10.0, 0.0, TAU, 16, Color(1.0, 0.3, 0.2, k), 2.0)
 	var vs = get_viewport_rect().size / game.camera.zoom
 	var tl = (game.camera.position - vs / 2.0) * s
 	draw_rect(Rect2(tl, vs * s), Color(1, 1, 1, 0.8), false, 1.0)
