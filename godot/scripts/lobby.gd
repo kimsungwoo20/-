@@ -7,7 +7,7 @@ const ConfigScript = preload("res://scripts/config.gd")
 
 const FACTION_CHOICES = ["random", "fire", "leaf", "weaver", "trap", "army"]
 const DIFF_CHOICES = ["easy", "normal", "hard"]
-const DEFAULT_SIGNAL = ""     # 배포한 연결 중개 서버 주소(예: wss://example.com). 비어 있으면 주소의 ?signal= 을 쓴다
+const DEFAULT_SIGNAL = "wss://ant-rts-signaling.onrender.com"     # 배포한 연결 중개 서버 주소(예: wss://example.com). 비어 있으면 주소의 ?signal= 을 쓴다
 const T_AI = 0
 const T_EMPTY = 1
 const T_PEOPLE = 2
