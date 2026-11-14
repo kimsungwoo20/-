@@ -41,6 +41,11 @@ var garden_target = null
 var shield = 0.0         # 포자 갑옷(전쟁 균류)이 흡수할 남은 피해
 var shield_t = 0.0
 var trail = false        # 길잡이 소형개미 근처의 일꾼
+# 베짜기개미 영역: 2 = 주 둥지와 연결된 영역 안, 1 = 끊어진 영역 안, 0 = 영역 밖, -1 = 해당 없음(다른 진영)
+var terr = -1
+var slow = 1.0           # 적 비단 장막에 의한 감속 배율
+var pinned_t = 0.0       # 고정병에게 물려 이동 불가인 남은 시간
+var pull_cd = 0.0
 var dead = false
 var selected = false
 var facing = 0.0
@@ -104,6 +109,8 @@ func refresh_hp():
 
 func sight():
 	if d.has("sight"):
+		if kind == "sentinel" and terr >= 1:
+			return d["sight"] * Data.SENTINEL_TERR_SIGHT
 		return d["sight"]
 	return Data.SIGHT_WORKER if is_worker else Data.SIGHT_UNIT
 
@@ -111,10 +118,23 @@ func detect_range():
 	return d.get("detect", 0.0)
 
 func spd():
-	var s = d["speed"] * game.players[pid].speed_mult(air)
+	var pp = game.players[pid]
+	var s = d["speed"] * pp.speed_mult(air) * slow
 	if trail:
 		s *= Data.PATHFINDER_WORKER_SPEED
+	if not air:
+		if terr == 2:
+			s *= Data.TERR_SPEED_SILK if pp.has("silk_road") else Data.TERR_SPEED_IN
+		elif terr == 0:
+			s *= Data.TERR_SPEED_OUT_FORT if pp.has("fortress") else Data.TERR_SPEED_OUT
 	return s
+
+# 공격 사거리(양쪽 반지름 제외). 개미산 포화는 연결된 영역 안에서 산성 공격 사거리를 늘린다
+func atk_reach():
+	var r = d["reach"]
+	if d.get("acid", false) and terr == 2 and game.players[pid].has("acid_sat"):
+		r *= Data.ACID_SAT_RANGE
+	return r
 
 func can_hit(t):
 	return hits_air or not t.air
@@ -278,8 +298,13 @@ func _physics_process(delta):
 			buffed = game.tyrant_near(position, pid)
 		elif kind == "medic":
 			game.medic_pulse(self, 0.5)
+		elif kind == "carrier":
+			game.carrier_pulse(self, 0.5)
 		elif is_worker and not is_neutral:
 			trail = game.pathfinder_near(position, pid)
+		if not is_neutral:
+			terr = game.territory_state(pid, position)
+			slow = game.curtain_factor(self)
 	match state:
 		IDLE:
 			if not rooted:
@@ -372,8 +397,14 @@ func _do_attack(delta):
 		else:
 			state = IDLE
 		return
-	var reach = d["reach"] + radius + target.radius
+	var reach = atk_reach() + radius + target.radius
 	var dist = position.distance_to(target.position)
+	# 사슬 견인병: 닿지 않는 적 유닛을 자기 앞으로 끌어온다(건물·거점화·공중 유닛 제외)
+	if d.get("pull", false) and pull_cd <= 0.0 and dist > reach and dist <= Data.PULL_RANGE and target.get("built") == null and target.get("is_neutral") != null and not target.rooted and not target.air:
+		pull_cd = Data.PULL_COOLDOWN
+		game.add_shot(position, target.position, Color(0.9, 0.9, 0.8))
+		target.position = game.terrain.nearest_open(position + (target.position - position).normalized() * (radius + target.radius + 2.0), target.layer)
+		dist = position.distance_to(target.position)
 	if dist <= reach:
 		facing = (target.position - position).angle()
 		if not rooted:
@@ -402,6 +433,17 @@ func _do_attack(delta):
 				dmg *= Data.MINIM_BONUS
 			if d.get("spore", false):
 				game.add_spore_zone(target.position, pid)
+			if terr == 2 and kind == "airsentry":
+				cd *= Data.AIRSENTRY_TERR_CD
+			if d.has("pin") and target.get("pinned_t") != null:
+				target.pinned_t = d["pin"]
+			if d.has("aoe"):
+				var ar = d["aoe"]
+				if terr == 2 and p.has("acid_sat"):
+					ar *= Data.ACID_SAT_AOE
+				game.splash(self, target, ar, dmg * Data.AOE_SPLASH)
+			if d.get("acid", false) and p.has("acid_pool"):
+				game.add_zone(target.position, Data.ACID_POOL_TIME, pid, Data.ACID_POOL_RADIUS, Data.ACID_POOL_DPS, "acid")
 			if d["reach"] > 30.0:
 				game.add_shot(position, target.position, Color(0.8, 1.0, 0.3))
 			target.take_damage(dmg, self)
@@ -435,6 +477,8 @@ func _do_gather(delta):
 		if node.take_slot(self):
 			in_slot = true
 			work = node.d["harvest_time"]
+			if terr == 2:
+				work /= Data.TERR_GATHER
 		return
 	work -= delta
 	if work <= 0.0:
@@ -488,8 +532,11 @@ func _go(p, delta, stop):
 	var dir = aim - position
 	if dir.length() < 0.5:
 		dir = to
+	if pinned_t > 0.0:
+		return false
 	var speed = spd()
-	if not air:
+	if not air and terr == -1:
+		# 베짜기개미(terr >= 0)는 수목 지대에서 느려지지 않는다
 		speed *= game.terrain.speed_mult(position, layer)
 	var v = dir.normalized() * speed + _separation()
 	var old = position
@@ -559,6 +606,8 @@ func take_damage(amount, attacker):
 		# 일꾼 등에 탄 소형 개미가 반격한다
 		if attacker != null and is_instance_valid(attacker) and attacker.get("pid") != pid and attacker.has_method("take_damage") and not attacker.get("dead"):
 			attacker.take_damage(Data.HITCH_REFLECT, null)
+	if attacker != null and is_instance_valid(attacker) and attacker.get("is_neutral") != null and attacker.d["reach"] > 30.0 and game.curtain_cover(self):
+		amount *= Data.CURTAIN_RANGED_TAKEN
 	if shield > 0.0:
 		var absorbed = min(shield, amount)
 		shield -= absorbed
@@ -607,6 +656,11 @@ func add_alarm():
 	alarm_t = Data.ALARM_TIME
 
 func _tick_status(delta):
+	pull_cd -= delta
+	if pinned_t > 0.0:
+		pinned_t -= delta
+	if terr == 2 and hp < max_hp:
+		hp = min(max_hp, hp + Data.TERR_REGEN * delta)
 	if alarm_t > 0.0:
 		alarm_t -= delta
 		if alarm_t <= 0.0:
@@ -637,6 +691,11 @@ func _draw():
 		draw_circle(Vector2(4, 10), r * 0.8, Color(0, 0, 0, 0.25))
 	if rooted:
 		draw_rect(Rect2(-r - 3, -r - 3, r * 2 + 6, r * 2 + 6), Color(0.85, 0.7, 0.4), false, 2.0)
+		if d.get("curtain", false):
+			draw_circle(Vector2.ZERO, Data.CURTAIN_RADIUS, Color(1, 1, 1, 0.07))
+			draw_arc(Vector2.ZERO, Data.CURTAIN_RADIUS, 0.0, TAU, 40, Color(1, 1, 1, 0.3), 1.0)
+	if pinned_t > 0.0:
+		draw_arc(Vector2.ZERO, r + 3.0, 0.0, TAU, 12, Color(1, 1, 1, 0.8), 1.5)
 	draw_set_transform(Vector2.ZERO, facing, Vector2.ONE)
 	if air:
 		draw_circle(Vector2(-r * 0.2, -r * 0.9), r * 0.7, Color(1, 1, 1, 0.45))

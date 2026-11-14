@@ -27,6 +27,7 @@ var seen = false        # 사람 플레이어가 한 번이라도 본 적 있는
 var stealthed = false
 var gardeners = []      # 균류 정원 안에서 일하는 일꾼(잎꾼개미)
 var garden_buf = 0.0
+var net_ok = true       # 베짜기개미: 주 둥지와 영역이 이어져 있는가
 
 func setup(g, p, k, pos, finished, main):
 	game = g
@@ -34,6 +35,8 @@ func setup(g, p, k, pos, finished, main):
 	kind = k
 	d = Data.faction_building(g.players[p].faction, k)
 	max_hp = d["hp"]
+	if g.players[p].has("fortress"):
+		max_hp *= Data.FORT_HP
 	radius = d["radius"]
 	position = pos
 	is_main = main
@@ -97,7 +100,10 @@ func _tick_garden(delta):
 	p.food += used * p.garden_ratio() * p.upkeep_mult()
 
 func sight():
-	return Data.SIGHT_NEST if kind == "nest" else Data.SIGHT_BUILDING
+	var s = Data.SIGHT_NEST if kind == "nest" else Data.SIGHT_BUILDING
+	if game.has_territory(pid):
+		s = max(s, Data.TERR_RADIUS[kind])
+	return s
 
 func display_name():
 	if kind == "nest":
@@ -136,6 +142,8 @@ func _physics_process(delta):
 		queue_redraw()
 		return
 	var p = game.players[pid]
+	if net_ok and hp < max_hp and p.has("fortress"):
+		hp = min(max_hp, hp + Data.FORT_REGEN * delta)
 	if kind == "nest":
 		_defend(delta)
 		_tick_garden(delta)
@@ -162,6 +170,8 @@ func _physics_process(delta):
 				it["started"] = true
 		if not blocked:
 			var speed = 1.0
+			if not net_ok:
+				speed *= Data.TERR_CUT_PRODUCTION     # 끊어진 구역의 건물은 생산이 느리다
 			if it["type"] == "unit":
 				if it["id"] == "worker":
 					if not is_main and not p.has("multiqueen"):

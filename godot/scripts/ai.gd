@@ -26,6 +26,11 @@ const PLANS = {
 		"research": ["high_yield", "carry1", "jaw1", "shell1", "hitchhiker", "colony1", "spawn1", "jaw2",
 			"shear1", "shell2", "antibiotic", "carry2", "nursery1", "colony2", "size1", "supermajor_caste", "branch",
 			"jaw3", "shell3", "troph1", "legs1", "size2", "nursery2", "troph2", "flight1", "spawn2"]},
+	"weaver": {"t1": "acid", "t2": "puller", "t3": "lord", "def": "pinner", "air": "airsentry",
+		"branches": ["fortress", "spreading"],
+		"research": ["carry1", "gland1", "shell1", "silk_road", "colony1", "spawn1", "living_chain", "gland2",
+			"acid_pool", "shell2", "acid_sat", "carry2", "nursery1", "colony2", "size1", "canopy_lord", "branch",
+			"gland3", "shell3", "jaw1", "troph1", "size2", "nursery2", "troph2", "flight1", "spawn2"]},
 }
 
 func setup(g, id):
@@ -223,7 +228,7 @@ func _find_spot(kind, center):
 	for r in [130.0, 180.0, 240.0, 300.0]:
 		for k in 10:
 			var pos = center + Vector2(r, 0).rotated(k * TAU / 10.0 + r)
-			if game.can_place(kind, pos):
+			if game.can_place(kind, pos, pid):
 				return pos
 	return null
 
@@ -253,11 +258,32 @@ func _expand(main, workers):
 			best = e
 	if best == null:
 		return
+	# 베짜기개미는 영역이 닿아야 지을 수 있으므로, 닿지 않으면 그쪽으로 초소를 하나 이어 붙인다
+	if game.has_territory(pid) and not game.in_build_territory(pid, best):
+		_weaver_step(best, workers)
+		return
 	var pos = best
-	if not game.can_place("nest", pos):
+	if not game.can_place("nest", pos, pid):
 		pos = _find_spot("nest", best)
 	if pos != null:
 		game.start_build(pid, "nest", pos, [_nearest(workers, pos)])
+
+func _weaver_step(goal, workers):
+	if game.players[pid].mat < game.bdata(pid, "defense")["mat"]:
+		return
+	var node = null
+	for n in game.terr_nodes.get(pid, []):
+		if n["build"] and (node == null or n["pos"].distance_to(goal) < node["pos"].distance_to(goal)):
+			node = n
+	if node == null:
+		return
+	var dir = (goal - node["pos"]).normalized()
+	for back in [0.93, 0.8, 0.65]:
+		for ang in [0.0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9]:
+			var pos = node["pos"] + dir.rotated(ang) * node["r"] * back
+			if game.can_place("defense", pos, pid):
+				game.start_build(pid, "defense", pos, [_nearest(workers, pos)])
+				return
 
 func _command_army(army, main):
 	if army.is_empty():

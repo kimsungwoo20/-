@@ -45,6 +45,12 @@ var drop_t = 0.0
 var detectors = {}       # pid -> [[위치, 감지 반경], ...]
 var drop_rng = RandomNumberGenerator.new()
 var spore_zones = []     # [위치, 남은 시간, 주인 pid]
+var zones = []           # 유닛에 피해를 주는 지대(농축 개미산): [위치, 남은 시간, 주인 pid, 반경, 초당 피해]
+var terr_nodes = {}      # pid -> [{pos, r, ok, build, id}]  수관 영역 고리
+var terr_lost = {}       # 고리 id -> 끊어진 뒤 지난 시간
+var terr_t = 0.0
+var curtains = []        # 펼쳐진 비단 장막: [위치, pid, 주인 영역 안인가]
+var terr_layer
 
 var build_mode = ""
 var lab_tab = "body"
@@ -60,6 +66,10 @@ func _ready():
 	terrain.setup()
 	world = Node2D.new()
 	add_child(world)
+	terr_layer = Node2D.new()
+	terr_layer.z_index = 1
+	add_child(terr_layer)
+	terr_layer.draw.connect(_draw_territory)
 	overlay = Node2D.new()
 	overlay.z_index = 50
 	add_child(overlay)
@@ -494,17 +504,152 @@ func deposit(pid, res, amount):
 	else:
 		p.mat += amount
 
+# ---------- 수관 영역 (베짜기개미) ----------
+
+func has_territory(pid):
+	return Data.FACTIONS[players[pid].faction].get("territory", false) if Data.FACTIONS.has(players[pid].faction) else false
+
+func _update_territory(delta):
+	terr_t -= delta
+	if terr_t > 0.0:
+		return
+	var dt = 0.25 - terr_t
+	terr_t = 0.25
+	curtains.clear()
+	for u in units:
+		if u.rooted and u.d.get("curtain", false) and not u.dead:
+			curtains.append([u.position, u.pid, u.terr >= 1])
+	var alive_ids = {}
+	for p in players:
+		if p.neutral or not has_territory(p.id):
+			terr_nodes.erase(p.id)
+			continue
+		var nodes = []
+		var root = -1
+		for b in buildings:
+			if b.pid == p.id and b.built and not b.dead:
+				if b.kind == "nest" and b.is_main:
+					root = nodes.size()
+				nodes.append({"pos": b.position, "r": Data.TERR_RADIUS[b.kind], "ok": false, "build": true, "id": b.get_instance_id(), "ent": b})
+		for u in units:
+			if u.pid == p.id and u.d.has("territory") and not u.dead and not u.carried:
+				nodes.append({"pos": u.position, "r": u.d["territory"], "ok": false, "build": false, "id": u.get_instance_id(), "ent": null})
+		# 주 둥지에서 출발해 영역이 맞닿은 고리를 따라 번져 나간다
+		var mult = Data.CHAIN_LINK_MULT if p.has("living_chain") else 1.0
+		if root >= 0:
+			nodes[root]["ok"] = true
+			var todo = [root]
+			while todo.size() > 0:
+				var i = todo.pop_back()
+				for j in nodes.size():
+					if not nodes[j]["ok"] and nodes[i]["pos"].distance_to(nodes[j]["pos"]) <= (nodes[i]["r"] + nodes[j]["r"]) * mult:
+						nodes[j]["ok"] = true
+						todo.append(j)
+		for n in nodes:
+			alive_ids[n["id"]] = true
+			if n["ok"]:
+				terr_lost.erase(n["id"])
+			else:
+				terr_lost[n["id"]] = terr_lost.get(n["id"], 0.0) + dt
+				# 살아있는 사슬: 끊어진 뒤에도 잠시 보너스 유지
+				if p.has("living_chain") and terr_lost[n["id"]] < Data.CHAIN_GRACE:
+					n["ok"] = true
+			if n["ent"] != null:
+				n["ent"].net_ok = n["ok"]
+		terr_nodes[p.id] = nodes
+	for id in terr_lost.keys():
+		if not alive_ids.has(id):
+			terr_lost.erase(id)
+	terr_layer.queue_redraw()
+
+# 2 = 주 둥지와 연결된 영역 안, 1 = 끊어진 영역 안, 0 = 영역 밖, -1 = 영역을 쓰지 않는 진영
+func territory_state(pid, pos):
+	if not terr_nodes.has(pid):
+		return -1 if not has_territory(pid) else 0
+	var best = 0
+	for n in terr_nodes[pid]:
+		if pos.distance_to(n["pos"]) <= n["r"]:
+			if n["ok"]:
+				return 2
+			best = 1
+	return best
+
+# 건물을 지을 수 있는 영역(건물이 만든 영역만. 수관 군주·유충 운반공의 임시 영역은 제외)
+func in_build_territory(pid, pos):
+	if not terr_nodes.has(pid):
+		return false
+	for n in terr_nodes[pid]:
+		if n["build"] and pos.distance_to(n["pos"]) <= n["r"]:
+			return true
+	return false
+
+func curtain_factor(u):
+	for c in curtains:
+		if c[1] != u.pid and c[0].distance_to(u.position) <= Data.CURTAIN_RADIUS:
+			if not u.air:
+				return Data.CURTAIN_SLOW
+			elif c[2]:
+				return Data.CURTAIN_AIR_SLOW
+	return 1.0
+
+func curtain_cover(u):
+	for c in curtains:
+		if c[1] == u.pid and c[0].distance_to(u.position) <= Data.CURTAIN_RADIUS:
+			return true
+	return false
+
+# 범위 공격: 맞은 대상 주변의 다른 적에게 피해
+func splash(attacker, target, radius, dmg):
+	for u in query_units(target.position, radius):
+		if u != target and is_hostile_target(u, attacker.pid) and (attacker.hits_air or not u.air):
+			u.take_damage(dmg, attacker)
+
+func add_zone(pos, time, pid, radius, dps, _kind):
+	zones.append([pos, time, pid, radius, dps])
+
+func _tick_zones(delta):
+	for z in zones:
+		z[1] -= delta
+		for u in query_units(z[0], z[3]):
+			if u.pid != z[2] and not u.air and not u.is_neutral:
+				u.take_damage(z[4] * delta, null)
+	zones = zones.filter(func(z): return z[1] > 0.0)
+
+# 유충 운반공: 주변 아군 건물 수리
+func carrier_pulse(m, dt):
+	for b in buildings:
+		if b.pid == m.pid and b.built and b.hp < b.max_hp and b.position.distance_to(m.position) <= Data.CARRIER_RADIUS + b.radius:
+			b.hp = min(b.max_hp, b.hp + Data.CARRIER_REPAIR * dt)
+
+func _draw_territory():
+	for pid in terr_nodes:
+		var mine = (pid == human_id)
+		for n in terr_nodes[pid]:
+			if not mine and not fog.is_visible_at(n["pos"]):
+				continue
+			var c = Color(0.3, 0.8, 0.35) if n["ok"] else Color(0.6, 0.6, 0.6)
+			if not mine:
+				c = players[pid].color
+			terr_layer.draw_circle(n["pos"], n["r"], Color(c.r, c.g, c.b, 0.06))
+			terr_layer.draw_arc(n["pos"], n["r"], 0.0, TAU, 64, Color(c.r, c.g, c.b, 0.35), 1.5)
+
 func bdata(pid, kind):
 	return Data.faction_building(players[pid].faction, kind)
 
-func can_place(kind, pos):
+func can_place(kind, pos, pid = -1):
+	if pid < 0:
+		pid = human_id
+	var weaver = has_territory(pid)
+	# 베짜기개미는 영역 안에만 지을 수 있다(전진 둥지 제외). 대신 수목 위에도 지을 수 있다
+	if weaver and kind != "tent" and not in_build_territory(pid, pos):
+		return false
 	var r = Data.BUILDINGS[kind]["radius"]
 	if pos.x < r + 20 or pos.y < r + 20 or pos.x > Data.MAP_SIZE.x - r - 20 or pos.y > Data.MAP_SIZE.y - r - 20:
 		return false
 	for b in buildings:
 		if b.position.distance_to(pos) < r + b.radius + 14.0:
 			return false
-	if not terrain.can_build(pos, r):
+	if not terrain.can_build(pos, r, weaver):
 		return false
 	for n in res_nodes:
 		if n.position.distance_to(pos) < r + n.radius + 30.0:
@@ -528,8 +673,14 @@ func start_build(pid, kind, pos, builders):
 	if main_tier(pid) < d.get("min_tier", 1):
 		_say(pid, "주 둥지 등급이 부족합니다")
 		return null
-	if not can_place(kind, pos):
-		_say(pid, "그 자리에는 지을 수 없습니다")
+	if kind == "tent" and not p.has("spreading"):
+		_say(pid, "뻗어가는 수관 연구가 필요합니다")
+		return null
+	if not can_place(kind, pos, pid):
+		if has_territory(pid) and kind != "tent" and not in_build_territory(pid, pos):
+			_say(pid, "수관 영역 안에만 지을 수 있습니다")
+		else:
+			_say(pid, "그 자리에는 지을 수 없습니다")
 		return null
 	if not p.can_afford(0, d["mat"]):
 		_say(pid, "재료가 부족합니다")
@@ -628,6 +779,11 @@ func research_reason(st, id):
 	return ""
 
 func on_research_done(pid, id):
+	if id == "fortress":
+		for b in buildings:
+			if b.pid == pid:
+				b.hp *= Data.FORT_HP
+				b.max_hp *= Data.FORT_HP
 	if id == "size1" or id == "size2" or id == "flight1":
 		for u in units:
 			if u.pid == pid:
@@ -821,7 +977,10 @@ func get_commands():
 		if u.d.get("root", false):
 			has_root = true
 	if has_worker:
-		for k in ["nest", "combat", "defense", "special", "lab"]:
+		var kinds = ["nest", "combat", "defense", "special", "lab"]
+		if p.has("spreading"):
+			kinds.append("tent")
+		for k in kinds:
 			var d2 = bdata(human_id, k)
 			var nm = d2["name"]
 			if k == "nest":
@@ -1124,8 +1283,10 @@ func _physics_process(delta):
 		p.pop_cap = min(p.pop_cap, Data.POP_MAX)
 		if p.alive and not p.neutral and not has_nest[p.id] and not sandbox:
 			_eliminate(p)
+	_update_territory(delta)
 	_tick_map(delta)
 	_tick_spores(delta)
+	_tick_zones(delta)
 	for p in players:
 		if p.war_cd > 0.0:
 			p.war_cd -= delta
@@ -1225,6 +1386,9 @@ func _draw():
 		draw_arc(e, 44.0, 0.0, TAU, 32, Color(1, 1, 1, 0.08), 2.0)
 
 func _draw_overlay():
+	for z in zones:
+		if fog.is_visible_at(z[0]):
+			overlay.draw_circle(z[0], z[3], Color(0.8, 1.0, 0.3, 0.3 * clamp(z[1], 0.0, 1.0)))
 	for z in spore_zones:
 		if fog.is_visible_at(z[0]):
 			overlay.draw_circle(z[0], Data.SPORE_ZONE_RADIUS, Color(0.7, 0.85, 0.4, 0.25 * clamp(z[1], 0.0, 1.0)))

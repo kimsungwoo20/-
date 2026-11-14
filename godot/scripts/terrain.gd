@@ -126,10 +126,11 @@ func reachable(a, b, layer):
 	return from == to or nav[layer].get_point_path(from, to, false).size() > 0
 
 # 건물은 맨땅에만 지을 수 있다(물·절벽·수목 불가)
-func can_build(pos, radius):
+func can_build(pos, radius, allow_tree = false):
 	for off in [Vector2.ZERO, Vector2(radius, 0), Vector2(-radius, 0), Vector2(0, radius), Vector2(0, -radius),
 			Vector2(radius, radius) * 0.7, Vector2(-radius, radius) * 0.7, Vector2(radius, -radius) * 0.7, Vector2(-radius, -radius) * 0.7]:
-		if kind_at(pos + off) != GROUND:
+		var k = kind_at(pos + off)
+		if k != GROUND and not (allow_tree and k == TREE):
 			return false
 	return true
 

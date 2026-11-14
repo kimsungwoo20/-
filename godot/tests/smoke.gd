@@ -685,6 +685,187 @@ func leaf_checks(game):
 	check(not game.use_war_fungus(1), "재사용 대기 중에는 다시 쓸 수 없다")
 	clear_units(game)
 
+	await weaver_checks(game)
+
+func weaver_checks(game):
+	# 점검 환경의 플레이어 1 을 베짜기개미로 바꿔서 확인한다
+	var W = game.players[1]
+	var F = game.players[0]
+	W.faction = "weaver"
+	W.research.clear()
+	W.food = 99999.0
+	W.mat = 99999.0
+	clear_units(game)
+	var nest = game.main_nest(1)
+	var np = nest.position
+	await wait(0.5)
+	check(game.has_territory(1) and not game.has_territory(0), "베짜기개미만 수관 영역을 쓴다")
+	check(game.territory_state(1, np + Vector2(0, 100)) == 2 and game.territory_state(1, np + Vector2(0, 700)) == 0, "주 둥지 주변은 연결된 영역, 멀리는 영역 밖")
+	check(game.territory_state(0, np) == -1, "다른 진영에는 영역 상태가 없다")
+
+	# 건설 규칙
+	var pa = np + Vector2(0, 220)
+	check(game.can_place("combat", pa, 1), "영역 안에는 건설 가능")
+	check(not game.can_place("combat", np + Vector2(0, 420), 1), "영역 밖에는 건설 불가")
+	check(game.can_place("combat", np + Vector2(0, 420), 0), "다른 진영은 영역과 무관하게 건설")
+	var A = game.spawn_building(1, "combat", pa, true, false)
+	await wait(0.5)
+	check(game.can_place("combat", np + Vector2(0, 420), 1), "건물을 지으면 영역이 넓어져 그 너머에 지을 수 있다")
+	var tree = Vector2(2900, 1330)
+	check(game.terrain.kind_at(tree) == 3 and game.can_place("lab", tree, 1) and not game.terrain.can_build(tree, 28.0), "베짜기개미는 수목 위에도 지을 수 있다")
+
+	# 네트워크 연결과 절단
+	var pb = np + Vector2(0, 600)
+	var B = game.spawn_building(1, "combat", pb, true, false)
+	await wait(0.5)
+	check(B.net_ok and game.territory_state(1, pb + Vector2(0, 100)) == 2, "영역이 맞닿으면 주 둥지와 이어진다")
+	game.enqueue_unit(B, "acid")
+	await wait(0.2)
+	var pr = B.queue[0]["progress"]
+	var e0 = game.elapsed
+	await wait(2.0)
+	var rate_ok = (B.queue[0]["progress"] - pr) / (game.elapsed - e0)
+	A.take_damage(99999.0, null)
+	await wait(0.5)
+	check(not B.net_ok and game.territory_state(1, pb + Vector2(0, 100)) == 1, "중간 고리가 파괴되면 그 너머는 끊어진 영역이 된다")
+	pr = B.queue[0]["progress"]
+	e0 = game.elapsed
+	await wait(2.0)
+	var rate_cut = (B.queue[0]["progress"] - pr) / (game.elapsed - e0)
+	check(abs(rate_ok - 1.0) < 0.03 and abs(rate_cut - Data.TERR_CUT_PRODUCTION) < 0.03, "끊어진 구역의 건물은 생산 속도 70%% (%.2f → %.2f)" % [rate_ok, rate_cut])
+	game.cancel_last(B)
+
+	# 유닛 보너스
+	var u_in = game.spawn_unit(1, "pinner", np + Vector2(0, 150))
+	var u_cut = game.spawn_unit(1, "pinner", pb + Vector2(0, 100))
+	var u_out = game.spawn_unit(1, "pinner", Vector2(2400, 300))
+	u_in.hp = 50.0
+	u_cut.hp = 50.0
+	await wait(1.1)
+	check(u_in.terr == 2 and u_cut.terr == 1 and u_out.terr == 0, "유닛의 영역 상태: 연결 / 끊어짐 / 밖")
+	check(abs(u_in.spd() - 75.0 * Data.TERR_SPEED_IN) < 0.01 and abs(u_cut.spd() - 75.0) < 0.01 and abs(u_out.spd() - 75.0 * Data.TERR_SPEED_OUT) < 0.01, "이동 속도: 연결된 영역 +15%, 끊어진 영역 그대로, 영역 밖 -15%")
+	check(u_in.hp > 50.5 and u_cut.hp == 50.0, "연결된 영역 안에서만 체력 회복")
+	W.research["silk_road"] = true
+	check(abs(u_in.spd() - 75.0 * Data.TERR_SPEED_SILK) < 0.01, "비단길: 연결된 영역 안 이동 속도 +60%")
+	W.research.erase("silk_road")
+	# 살아있는 사슬
+	W.research["living_chain"] = true
+	await wait(0.5)
+	check(B.net_ok, "살아있는 사슬: 연결 가능 거리 +25% 로 다시 이어진다")
+	var D = game.spawn_building(1, "combat", Vector2(2000, 400), true, false)
+	await wait(0.5)
+	check(D.net_ok and game.terr_lost.has(D.get_instance_id()), "살아있는 사슬: 끊어진 구역도 잠시 보너스 유지")
+	Engine.time_scale = 8.0
+	await wait(Data.CHAIN_GRACE / 8.0 + 1.0)
+	Engine.time_scale = 1.0
+	check(not D.net_ok, "30초가 지나면 끊어진 구역의 보너스가 사라진다")
+	# 유충 운반공: 임시 고리와 수리
+	W.research.erase("living_chain")
+	await wait(0.5)
+	check(not B.net_ok, "살아있는 사슬이 없으면 다시 끊어진다")
+	var car = game.spawn_unit(1, "carrier", np + Vector2(0, 340))
+	await wait(0.5)
+	check(B.net_ok, "유충 운반공이 사이에 서면 끊어진 네트워크가 이어진다")
+	check(not game.in_build_territory(1, np + Vector2(120, 400)) or game.territory_state(1, np + Vector2(120, 400)) >= 1, "유충 운반공의 임시 영역")
+	B.hp = 100.0
+	car.position = pb + Vector2(60, 0)
+	await wait(1.2)
+	check(B.hp > 102.0, "유충 운반공이 건물을 수리한다")
+	clear_units(game)
+
+	# 전투 유닛
+	var base = Vector2(2300, 700)
+	var ac = game.spawn_unit(1, "acid", base)
+	var v1 = game.spawn_unit(0, "soldier", base + Vector2(90, 0))
+	var v2 = game.spawn_unit(0, "soldier", base + Vector2(90, 16))
+	for v in [v1, v2]:
+		v.max_hp = 9999.0
+		v.hp = 9999.0
+	var d1 = await hit_once(game, ac, v1)
+	check(abs(d1 - 8.0 * F.taken_mult()) < 0.01 and abs((9999.0 - v2.hp) - 4.0 * F.taken_mult()) < 0.01, "산성 분사병: 대상 8, 주변 적 절반 피해")
+	W.research["acid_pool"] = true
+	await hit_once(game, ac, v1)
+	check(game.zones.size() > 0, "농축 개미산: 바닥에 산성 지대")
+	W.research.erase("acid_pool")
+	clear_units(game)
+	await wait(0.1)
+	var pl = game.spawn_unit(1, "puller", base)
+	var far = game.spawn_unit(0, "soldier", base + Vector2(120, 0))
+	far.max_hp = 9999.0
+	far.hp = 9999.0
+	pl.cmd_attack(far)
+	await wait(0.3)
+	check(far.position.distance_to(pl.position) < 30.0, "사슬 견인병이 떨어진 적을 자기 앞으로 끌어온다")
+	clear_units(game)
+	var pn = game.spawn_unit(1, "pinner", base)
+	var runner = game.spawn_unit(0, "soldier", base + Vector2(18, 0))
+	runner.max_hp = 9999.0
+	runner.hp = 9999.0
+	await hit_once(game, pn, runner)
+	var rp = runner.position
+	runner.cmd_move(base + Vector2(400, 0))
+	await wait(0.8)
+	check(runner.position.distance_to(rp) < 2.0, "고정병에게 물린 적은 움직이지 못한다")
+	clear_units(game)
+	# 비단 장막
+	var cur = game.spawn_unit(1, "curtain", base)
+	cur.toggle_root()
+	var walker = game.spawn_unit(0, "soldier", base + Vector2(50, 0))
+	var flyer = game.spawn_unit(0, "scout", base + Vector2(-50, 0))
+	var friend = game.spawn_unit(1, "pinner", base + Vector2(0, 40))
+	var outsider = game.spawn_unit(1, "pinner", base + Vector2(0, 300))
+	var shooter = game.spawn_unit(0, "sprayer", base + Vector2(600, 600))
+	await wait(1.2)
+	check(abs(walker.slow - Data.CURTAIN_SLOW) < 0.01, "비단 장막 안의 적 지상 유닛은 이동 속도 40%")
+	check(flyer.slow == 1.0, "영역 밖의 장막은 공중 유닛을 늦추지 못한다")
+	var fh = friend.hp
+	friend.take_damage(10.0, shooter)
+	var oh = outsider.hp
+	outsider.take_damage(10.0, shooter)
+	check(abs((fh - friend.hp) - 7.0) < 0.01 and abs((oh - outsider.hp) - 10.0) < 0.01, "장막 안 아군은 원거리 피해 -30%")
+	clear_units(game)
+	var cur2 = game.spawn_unit(1, "curtain", np + Vector2(100, -150))
+	cur2.toggle_root()
+	var flyer2 = game.spawn_unit(0, "scout", np + Vector2(130, -150))
+	await wait(1.2)
+	check(abs(flyer2.slow - Data.CURTAIN_AIR_SLOW) < 0.01, "영역 안의 장막(공중 장막)은 공중 유닛도 늦춘다")
+	clear_units(game)
+	# 감시병, 수관 군주
+	var se_in = game.spawn_unit(1, "sentinel", np + Vector2(0, -100))
+	var se_out = game.spawn_unit(1, "sentinel", Vector2(2300, 300))
+	await wait(0.6)
+	check(abs(se_in.sight() - 260.0 * Data.SENTINEL_TERR_SIGHT) < 0.01 and se_out.sight() == 260.0, "감시병은 영역 안에서 시야가 넓어진다")
+	var cb = game.spawn_building(1, "combat", np + Vector2(-200, 0), true, false)
+	nest.tier = 3
+	check(not game.enqueue_unit(cb, "lord"), "수관의 군주 없이는 수관 군주 생산 불가")
+	W.research["canopy_lord"] = true
+	check(game.enqueue_unit(cb, "lord"), "수관의 군주 연구 후 생산 가능")
+	game.cancel_last(cb)
+	var lord_pos = Vector2(2300, 300)
+	var lord = game.spawn_unit(1, "lord", lord_pos)
+	await wait(0.6)
+	check(game.territory_state(1, lord_pos + Vector2(100, 0)) >= 1, "수관 군주 주변에 이동식 영역이 생긴다")
+	check(not game.can_place("combat", lord_pos + Vector2(100, 0), 1), "수관 군주의 임시 영역에는 건물을 지을 수 없다")
+	clear_units(game)
+	# 분기 진화
+	var hp0 = cb.max_hp
+	W.research["fortress"] = true
+	game.on_research_done(1, "fortress")
+	check(abs(cb.max_hp - hp0 * Data.FORT_HP) < 0.01, "철옹성: 건물 체력 +30%")
+	cb.hp = 100.0
+	await wait(1.0)
+	check(cb.hp > 102.0, "철옹성: 연결된 영역 안 건물 회복")
+	W.research.erase("fortress")
+	var tp = Vector2(2150, 150)
+	check(game.start_build(1, "tent", tp, []) == null, "뻗어가는 수관 없이는 전진 둥지 건설 불가")
+	W.research["spreading"] = true
+	var tent = game.start_build(1, "tent", tp, [])
+	check(tent != null, "뻗어가는 수관: 영역 밖에 전진 둥지 건설")
+	if tent != null:
+		tent.add_build(1000.0)
+		await wait(0.5)
+		check(game.in_build_territory(1, tp + Vector2(120, 0)), "전진 둥지가 작은 영역을 만든다")
+
 func _initialize():
 	Engine.time_scale = 1.0
 	var game = load("res://scenes/main.tscn").instantiate()

@@ -116,6 +116,34 @@ const UNITS = {
 	"spore": {"name": "포자 살포 날개개미", "food": 100, "mat": 100, "pop": 3.0, "time": 50.0, "tier": 2,
 		"hp": 90.0, "dmg": 4.0, "cd": 2.0, "reach": 60.0, "speed": 60.0, "radius": 8.0, "batch": 1,
 		"air": true, "hits_air": false, "spore": true},
+	# ---- 베짜기개미 ----
+	# 산성 분사병: 원거리, 작은 범위 피해(aoe)
+	"acid": {"name": "산성 분사병", "food": 70, "mat": 0, "pop": 2.0, "time": 17.5, "tier": 1,
+		"hp": 55.0, "dmg": 8.0, "cd": 1.2, "reach": 100.0, "speed": 82.0, "radius": 6.5, "batch": 1, "aoe": 22.0, "acid": true},
+	# 사슬 견인병: 떨어진 적 1기를 자기 앞으로 끌어당긴다
+	"puller": {"name": "사슬 견인병", "food": 120, "mat": 40, "pop": 3.0, "time": 45.0, "tier": 2,
+		"hp": 180.0, "dmg": 10.0, "cd": 1.0, "reach": 5.0, "speed": 78.0, "radius": 9.0, "batch": 1, "pull": true},
+	# 수관 군주: 주변에 이동식 임시 영역. 고유 진화 "수관의 군주" 필요
+	"lord": {"name": "수관 군주", "food": 300, "mat": 200, "pop": 6.0, "time": 60.0, "tier": 3,
+		"hp": 600.0, "dmg": 24.0, "cd": 1.2, "reach": 90.0, "speed": 60.0, "radius": 14.0, "batch": 1,
+		"aoe": 30.0, "acid": true, "territory": 160.0, "needs": "canopy_lord"},
+	# 고정병: 물고 늘어져 적을 이동 불가로 만든다
+	"pinner": {"name": "고정병", "food": 70, "mat": 0, "pop": 2.0, "time": 17.5, "tier": 1,
+		"hp": 120.0, "dmg": 4.0, "cd": 1.0, "reach": 4.0, "speed": 75.0, "radius": 7.5, "batch": 1, "pin": 1.5},
+	# 장막 방직병: 거점화하면 비단 장막. 지나가는 적 감속, 장막 안 아군이 받는 원거리 피해 감소
+	"curtain": {"name": "장막 방직병", "food": 90, "mat": 30, "pop": 2.0, "time": 34.0, "tier": 2,
+		"hp": 110.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 70.0, "radius": 7.0, "batch": 1,
+		"root": true, "curtain": true},
+	"sentinel": {"name": "감시병", "food": 40, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
+		"hp": 35.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 105.0, "radius": 4.5, "batch": 1,
+		"sight": 260.0, "detect": 260.0},
+	# 유충 운반공: 건물 수리, 끊어진 네트워크를 잇는 임시 고리
+	"carrier": {"name": "유충 운반공", "food": 80, "mat": 40, "pop": 2.0, "time": 30.0, "tier": 2,
+		"hp": 70.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 75.0, "radius": 7.0, "batch": 1,
+		"repair": true, "territory": 150.0},
+	"airsentry": {"name": "날개 파수꾼", "food": 90, "mat": 80, "pop": 2.0, "time": 38.0, "tier": 2,
+		"hp": 70.0, "dmg": 9.0, "cd": 1.2, "reach": 95.0, "speed": 105.0, "radius": 7.0, "batch": 1,
+		"air": true, "acid": true},
 	# ---- 불개미 ----
 	# 보모 개미: 근처에서 아군 침병·병정개미가 죽으면 가까운 생산 건물의 진행도를 앞당긴다
 	"nurse": {"name": "보모 개미", "food": 50, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
@@ -150,6 +178,8 @@ const BUILDINGS = {
 	"defense": {"mat": 150, "time": 30.0, "hp": 750.0, "radius": 30.0},
 	"special": {"mat": 200, "time": 40.0, "hp": 550.0, "radius": 30.0, "min_tier": 2},
 	"lab": {"mat": 200, "time": 40.0, "hp": 550.0, "radius": 28.0},
+	# 전진 둥지: 베짜기개미 분기 진화 "뻗어가는 수관" 전용. 영역만 만들고 생산은 못 한다
+	"tent": {"mat": 75, "time": 15.0, "hp": 300.0, "radius": 18.0},
 }
 
 const UPKEEP_COMMON = [[60.0, 1.0], [120.0, 0.85], [99999.0, 0.7]]
@@ -184,7 +214,53 @@ const FACTIONS = {
 		"mat_carry_bonus": 5.0,            # 잎꾼 일꾼은 재료를 15 씩 나른다
 		"garden": [4, 8, 12, 2],           # 정원사 슬롯: 주 둥지 I / II / III, 위성 둥지
 	},
+	"weaver": {
+		"name": "베짜기개미",
+		"buildings": {
+			"nest": {"name": "잎 궁전", "produces": ["worker"]},
+			"combat": {"name": "산성 둥지", "produces": ["acid", "puller", "lord"]},
+			"defense": {"name": "수관 초소", "produces": ["pinner", "curtain"]},
+			"special": {"name": "유충 방직실", "produces": ["sentinel", "carrier", "airsentry"]},
+			"lab": {"name": "비단 직조실", "produces": []},
+			"tent": {"name": "전진 둥지", "produces": []},
+		},
+		"sat_nest_mult": 1.0,
+		"upkeep": UPKEEP_COMMON,
+		"mat_carry_bonus": 0.0,
+		"garden": [0, 0, 0, 0],
+		"territory": true,                 # 건물이 수관 영역을 만들고, 영역 안에만 건설 가능
+	},
 }
+
+# ---- 수관 영역 (베짜기개미) ----
+const TERR_RADIUS = {"nest": 280.0, "combat": 220.0, "defense": 300.0, "special": 220.0, "lab": 220.0, "tent": 160.0}
+const TERR_SPEED_IN = 1.15             # 주 둥지와 연결된 영역 안 이동 속도
+const TERR_SPEED_SILK = 1.6            # 비단길 연구 후
+const TERR_SPEED_OUT = 0.85            # 영역 밖
+const TERR_SPEED_OUT_FORT = 0.75       # 철옹성 선택 시 영역 밖
+const TERR_REGEN = 1.0                 # 연결된 영역 안 유닛 초당 회복
+const TERR_GATHER = 1.2                # 연결된 영역 안 채집 속도
+const TERR_CUT_PRODUCTION = 0.7        # 끊어진 구역 건물의 생산 속도
+const CHAIN_LINK_MULT = 1.25           # 살아있는 사슬: 연결 가능 거리
+const CHAIN_GRACE = 30.0               # 살아있는 사슬: 끊어진 뒤 보너스 유지 시간
+const ACID_SAT_RANGE = 1.25
+const ACID_SAT_AOE = 1.5
+const ACID_POOL_TIME = 3.0
+const ACID_POOL_DPS = 3.0
+const ACID_POOL_RADIUS = 25.0
+const AOE_SPLASH = 0.5                 # 범위 공격이 주변 적에게 주는 피해 비율
+const PULL_RANGE = 140.0
+const PULL_COOLDOWN = 8.0
+const CURTAIN_RADIUS = 90.0
+const CURTAIN_SLOW = 0.4
+const CURTAIN_AIR_SLOW = 0.5
+const CURTAIN_RANGED_TAKEN = 0.7
+const CARRIER_RADIUS = 120.0
+const CARRIER_REPAIR = 5.0
+const SENTINEL_TERR_SIGHT = 1.6
+const AIRSENTRY_TERR_CD = 0.77
+const FORT_HP = 1.3
+const FORT_REGEN = 3.0
 
 # 균류 정원: 정원사 1기가 초당 재료 0.75 를 식량으로 바꾼다(분당 재료 45 → 식량 90)
 const GARDEN_MAT_PER_SEC = 0.75
@@ -289,6 +365,20 @@ const RESEARCH = {
 		"tip": "정원사 슬롯 +50%. 전쟁 균류와 동시 선택 불가", "req": "", "group": "branch", "faction": "leaf"},
 	"war_fungus": {"name": "[분기] 전쟁 균류", "cat": "unique", "line": "war_fungus", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
 		"tip": "주 둥지에서 식량 300 으로 전 병력에 포자 갑옷(피해 40 흡수, 20초) 부여. 재사용 90초. 거대 정원과 동시 선택 불가", "req": "", "group": "branch", "faction": "leaf"},
+	"acid_pool": {"name": "농축 개미산", "cat": "body", "line": "acid_pool", "lvl": 1, "tier": 2, "mat": 200, "food": 100, "time": 90.0,
+		"tip": "산성 공격이 바닥에 3초간 남아 지나가는 적에게 피해", "req": "", "group": "", "faction": "weaver"},
+	"silk_road": {"name": "비단길", "cat": "unique", "line": "silk_road", "lvl": 1, "tier": 2, "mat": 200, "food": 0, "time": 75.0,
+		"tip": "연결된 영역 안 이동 속도 +15% → +60%", "req": "", "group": "", "faction": "weaver"},
+	"living_chain": {"name": "살아있는 사슬", "cat": "unique", "line": "living_chain", "lvl": 1, "tier": 2, "mat": 150, "food": 50, "time": 60.0,
+		"tip": "영역 연결 가능 거리 +25%. 끊어진 구역이 30초간 보너스 유지", "req": "", "group": "", "faction": "weaver"},
+	"acid_sat": {"name": "개미산 포화", "cat": "unique", "line": "acid_sat", "lvl": 1, "tier": 2, "mat": 150, "food": 50, "time": 60.0,
+		"tip": "연결된 영역 안에서 산성 공격 사거리 +25%, 범위 +50%", "req": "", "group": "", "faction": "weaver"},
+	"canopy_lord": {"name": "수관의 군주", "cat": "unique", "line": "canopy_lord", "lvl": 1, "tier": 3, "mat": 250, "food": 0, "time": 90.0,
+		"tip": "수관 군주 생산 가능", "req": "", "group": "", "faction": "weaver"},
+	"fortress": {"name": "[분기] 철옹성", "cat": "unique", "line": "fortress", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
+		"tip": "건물 체력 +30%, 연결된 영역 안 건물 초당 3 회복. 영역 밖 이동 속도 불이익 증가. 뻗어가는 수관과 동시 선택 불가", "req": "", "group": "branch", "faction": "weaver"},
+	"spreading": {"name": "[분기] 뻗어가는 수관", "cat": "unique", "line": "spreading", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
+		"tip": "일꾼이 영역 밖에도 전진 둥지(작은 영역, 생산 불가)를 지을 수 있다. 철옹성과 동시 선택 불가", "req": "", "group": "branch", "faction": "weaver"},
 	"tyrant_blood": {"name": "폭군의 혈통", "cat": "unique", "line": "tyrant_blood", "lvl": 1, "tier": 3, "mat": 250, "food": 0, "time": 90.0,
 		"tip": "폭군 대병 생산 가능", "req": "", "group": "", "faction": "fire"},
 	"wave": {"name": "[분기] 끝없는 물결", "cat": "unique", "line": "wave", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
