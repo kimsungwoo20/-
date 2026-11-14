@@ -186,6 +186,8 @@ func _info():
 		var t = "%s\n체력 %d / %d" % [b.display_name(), int(b.hp), int(b.max_hp)]
 		if b.pid != game.human_id:
 			return t
+		if b.mode != "camp":
+			t += "\n" + {"packing": "행군 준비 중", "march": "행군 중 (오른쪽 클릭: 이동)", "unpacking": "야영 준비 중"}[b.mode]
 		if not b.built:
 			return t + "\n건설 중 %d%% (일꾼이 붙어 있어야 진행)" % int(b.build_progress / b.d["time"] * 100.0)
 		if b.upgrade_t >= 0.0:
@@ -202,7 +204,7 @@ func _info():
 			if not first["started"]:
 				st = "대기 (인구 부족 또는 여왕 계승 중)"
 			t += "\n생산: %s\n대기열: %s" % [st, ", ".join(names)]
-		if b.d["produces"].size() > 0:
+		if b.d["produces"].size() > 0 and b.camped():
 			t += "\n오른쪽 클릭: 집결 지점"
 		return t
 	var us = game.sel_units()

@@ -59,6 +59,11 @@ var lure_cd = 0.0
 var immune_t = 0.0       # 유인병 효과 면역
 var land_t = 0.0         # 낙하 사냥꾼이 지상에 내려와 있는 남은 시간
 var last_pos = Vector2.ZERO
+# 군대개미
+var escort_near = false  # 수호병: 행군 중인 아군 건물 근처
+var bridge_r = 0.0       # 다리 개미가 이어 놓은 다리의 반경(0 이면 없음)
+var hook_t = 0.0         # 갈고리 턱에 걸려 느려진 남은 시간
+var fac = {}             # 소속 진영 데이터
 var dead = false
 var selected = false
 var facing = 0.0
@@ -87,6 +92,8 @@ func setup(g, p, k, pos):
 	else:
 		d = Data.NEUTRALS[k]
 	is_neutral = (p == Data.NEUTRAL_ID)
+	if not is_neutral:
+		fac = Data.FACTIONS.get(g.players[p].faction, {})
 	home = pos
 	wander_t = randf_range(2.0, 6.0)
 	base_hp = d["hp"]
@@ -130,7 +137,7 @@ func sight():
 		if kind == "sentinel" and terr >= 1:
 			return d["sight"] * Data.SENTINEL_TERR_SIGHT
 		return d["sight"]
-	return Data.SIGHT_WORKER if is_worker else Data.SIGHT_UNIT
+	return (Data.SIGHT_WORKER if is_worker else Data.SIGHT_UNIT) * fac.get("sight_mult", 1.0)
 
 func detect_range():
 	return d.get("detect", 0.0)
@@ -138,6 +145,10 @@ func detect_range():
 func spd():
 	var pp = game.players[pid]
 	var s = d["speed"] * pp.speed_mult(air) * slow * lone_mult
+	if hook_t > 0.0:
+		s *= Data.HOOK_SLOW
+	if not air and pp.has("living_bridge") and game.terrain.on_bridge(position):
+		s *= Data.BRIDGE_SPEED
 	if trail:
 		s *= Data.PATHFINDER_WORKER_SPEED
 	if not air:
@@ -148,13 +159,20 @@ func spd():
 	return s
 
 # 공격 사거리(양쪽 반지름 제외). 개미산 포화는 연결된 영역 안에서 산성 공격 사거리를 늘린다
-func atk_reach():
+func atk_reach(t = null):
 	var r = d["reach"]
+	# 살아있는 탑: 거점화한 다리 개미는 가까운 공중 유닛을 공격한다
+	if d.get("bridge", false) and rooted and t != null and t.get("air") == true:
+		return Data.TOWER_REACH
 	if d.get("acid", false) and terr == 2 and game.players[pid].has("acid_sat"):
 		r *= Data.ACID_SAT_RANGE
 	return r
 
 func can_hit(t):
+	if d.get("air_only", false):
+		return t.air
+	if d.get("bridge", false):
+		return not t.air or rooted
 	return hits_air or not t.air
 
 func toggle_root():
@@ -164,6 +182,17 @@ func toggle_root():
 	rooted = not rooted
 	target = null
 	state = IDLE
+	if d.get("bridge", false):
+		if rooted:
+			bridge_r = Data.BRIDGE_RADIUS_LIVING if game.players[pid].has("living_bridge") else Data.BRIDGE_RADIUS
+			game.terrain.add_bridge(position, bridge_r, 1)
+		else:
+			drop_bridge()
+
+func drop_bridge():
+	if bridge_r > 0.0:
+		game.terrain.add_bridge(position, bridge_r, -1)
+		bridge_r = 0.0
 
 func _snap(p):
 	if air:
@@ -197,6 +226,11 @@ func cmd_attack(t):
 	state = ATTACK
 
 func cmd_gather(n):
+	# 군대개미는 진딧물을 기르지 못한다. 대신 도살한다
+	if n.kind == "aphid" and fac.get("no_aphid", false):
+		if n.attackable():
+			cmd_attack(n)
+		return
 	_leave()
 	node = n
 	last_res = n.res_type()
@@ -330,6 +364,11 @@ func _physics_process(delta):
 			slow = game.curtain_factor(self)
 			if d.get("guard", false):
 				guard_near = game.near_own_building(position, pid, Data.GUARD_RADIUS)
+			if d.get("escort", false):
+				escort_near = game.near_marching_building(position, pid, Data.ESCORT_RADIUS)
+			# 발밑의 다리가 사라져 물·절벽 위에 남았으면 가까운 땅으로 옮긴다
+			if not air and not game.terrain.passable(position, layer):
+				position = game.terrain.nearest_open(position, layer)
 			lone_mult = game.lone_factor(self)
 	match state:
 		IDLE:
@@ -402,7 +441,7 @@ func _think(delta, from_amove):
 	if think > 0.0:
 		return false
 	think = 0.3
-	var t = game.find_enemy(position, pid, Data.AGGRO, hits_air)
+	var t = game.find_enemy(position, pid, Data.AGGRO, hits_air or (d.get("bridge", false) and rooted), d.get("air_only", false))
 	if t == null:
 		return false
 	target = t
@@ -423,7 +462,7 @@ func _do_attack(delta):
 		else:
 			state = IDLE
 		return
-	var reach = atk_reach() + radius + target.radius
+	var reach = atk_reach(target) + radius + target.radius
 	var dist = position.distance_to(target.position)
 	# 사슬 견인병: 닿지 않는 적 유닛을 자기 앞으로 끌어온다(건물·거점화·공중 유닛 제외)
 	if d.get("pull", false) and pull_cd <= 0.0 and dist > reach and dist <= Data.PULL_RANGE and target.get("built") == null and target.get("is_neutral") != null and not target.rooted and not target.air:
@@ -481,12 +520,14 @@ func _do_attack(delta):
 				var ar = d["aoe"]
 				if terr == 2 and p.has("acid_sat"):
 					ar *= Data.ACID_SAT_AOE
-				game.splash(self, target, ar, dmg * Data.AOE_SPLASH)
+				game.splash(self, target, ar, dmg * d.get("aoe_mult", Data.AOE_SPLASH))
 			if d.get("acid", false) and p.has("acid_pool"):
 				game.add_zone(target.position, Data.ACID_POOL_TIME, pid, Data.ACID_POOL_RADIUS, Data.ACID_POOL_DPS, "acid")
 			if d["reach"] > 30.0:
 				game.add_shot(position, target.position, Color(0.8, 1.0, 0.3))
 			var tpos = target.position
+			if p.has("hook_jaw") and not is_worker and target.get("hook_t") != null:
+				target.hook_t = Data.HOOK_TIME
 			target.take_damage(dmg, self)
 			if not is_worker and _valid(target):
 				target.add_venom(p.venom_cap(), p.has("burn"))
@@ -520,6 +561,8 @@ func _do_gather(delta):
 		if node.take_slot(self):
 			in_slot = true
 			work = node.d["harvest_time"]
+			if node.kind == "corpse":
+				work *= fac.get("corpse_harvest", 1.0)
 			if terr == 2:
 				work /= Data.TERR_GATHER
 		return
@@ -642,6 +685,8 @@ func take_damage(amount, attacker):
 		return
 	var pp = game.players[pid]
 	amount *= pp.taken_mult(d.get("upg", 1.0))
+	if escort_near:
+		amount *= Data.ESCORT_TAKEN
 	if rooted:
 		amount *= Data.ROOT_DAMAGE_MULT
 	if is_worker and pp.has("hitchhiker"):
@@ -659,6 +704,7 @@ func take_damage(amount, attacker):
 	if hp <= 0.0:
 		dead = true
 		_leave()
+		game.on_kill(attacker, self)
 		game.on_unit_death(self)
 		game.remove_unit(self)
 		return
@@ -695,6 +741,7 @@ func snap_ready():
 	return d.get("snap", false) and snap_t >= snap_charge()
 
 func _tick_trap(delta):
+	hook_t -= delta
 	snap_t += delta
 	leap_cd -= delta
 	lure_cd -= delta
@@ -866,6 +913,12 @@ func _draw():
 		draw_circle(Vector2(r * 0.2, -r * 0.9), r * 0.45, Color(0.35, 0.7, 0.3))
 	if is_worker:
 		draw_circle(Vector2.ZERO, r * 0.25, Color(1, 1, 1, 0.7))
+	if kind == "porter":
+		draw_rect(Rect2(-r * 0.5, -r * 0.5, r, r), Color(0.9, 0.8, 0.5))
+	if bridge_r > 0.0:
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		draw_arc(Vector2.ZERO, bridge_r, 0.0, TAU, 40, Color(0.75, 0.6, 0.35, 0.6), 2.0)
+		draw_set_transform(Vector2.ZERO, facing, Vector2.ONE)
 	if kind == "raft":
 		draw_circle(Vector2.ZERO, r, Color(0.45, 0.3, 0.15))
 		draw_arc(Vector2.ZERO, r, 0.0, TAU, 20, c, 2.0)

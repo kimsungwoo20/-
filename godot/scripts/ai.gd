@@ -13,6 +13,10 @@ var defend_pos = Vector2.ZERO
 var defend_t = 0.0
 var branch_pick = ""
 var plan = {}
+# 군대개미 이주
+var migrating = false
+var migrate_to = Vector2.ZERO
+var nomad_t = 0.0
 # t1/t2/t3: 전투 생산 건물 유닛, def: 방어 생산 건물 유닛, air: 특수 생산 건물 유닛
 # research 의 "branch" 자리에서 분기 진화(둘 중 무작위)를 고른다
 const PLANS = {
@@ -31,6 +35,11 @@ const PLANS = {
 		"research": ["carry1", "jaw1", "shell1", "chain_snap", "colony1", "full_ambush", "jaw2", "power_snap",
 			"shell2", "leap_master", "carry2", "nursery1", "size1", "king_unlock", "branch", "jaw3", "shell3",
 			"size2", "legs1", "nursery2", "flight1", "spawn1", "colony2"]},
+	"army": {"t1": "raider", "t2": "sickle", "t3": "horde", "def": "warden", "air": "drone",
+		"branches": ["eternal_wander", "statary_brood"], "max_workers": 24, "nomad": true,
+		"research": ["carry1", "jaw1", "shell1", "loot_instinct", "colony1", "great_march", "jaw2", "hook_jaw",
+			"shell2", "spawn1", "carry2", "nursery1", "size1", "predator_wave", "branch", "jaw3", "shell3",
+			"size2", "legs1", "nursery2", "colony2", "living_bridge", "flight1"]},
 	"weaver": {"t1": "acid", "t2": "puller", "t3": "lord", "def": "pinner", "air": "airsentry",
 		"branches": ["fortress", "spreading"],
 		"research": ["carry1", "gland1", "shell1", "silk_road", "colony1", "spawn1", "living_chain", "gland2",
@@ -120,7 +129,7 @@ func tick(delta):
 	var n_def = game.count_buildings(pid, "defense")
 	var n_nest = game.count_buildings(pid, "nest")
 	var n_lab = game.count_buildings(pid, "lab")
-	if unbuilt.is_empty() and workers.size() > 0:
+	if unbuilt.is_empty() and workers.size() > 0 and not migrating:
 		if n_combat == 0:
 			_build("combat", main.position, workers)
 		elif n_nest < 2 and e > 150.0:
@@ -177,6 +186,8 @@ func tick(delta):
 	if attacking and p.has("war_fungus") and p.war_cd <= 0.0 and p.food > 500.0:
 		game.use_war_fungus(pid)
 
+	if plan.get("nomad", false):
+		_nomad(main)
 	_command_army(army, main)
 
 # 잎꾼개미: 재료가 넉넉하면 정원사를 늘리고, 바닥나면 줄인다
@@ -322,6 +333,18 @@ func _command_army(army, main):
 				if u.state == UnitScript.IDLE:
 					u.cmd_amove(tgt.position)
 	else:
+		# 군대개미: 가까운 진딧물 군락을 도살해 식량을 얻는다
+		if plan.get("nomad", false) and army.size() >= 4:
+			var aph = null
+			for n in game.res_nodes:
+				if n.kind == "aphid" and n.attackable() and n.position.distance_to(main.position) < 1000.0:
+					if aph == null or n.position.distance_to(main.position) < aph.position.distance_to(main.position):
+						aph = n
+			if aph != null:
+				for u in army:
+					if (u.state == UnitScript.IDLE or u.state == UnitScript.MOVE) and u.can_hit(aph):
+						u.cmd_attack(aph)
+				return
 		# 쉬는 병력이 충분하면 가까운 유충·거미 무리를 사냥해 사체(식량)를 얻는다
 		if army.size() >= 6:
 			var prey = _nearest_prey(main.position)
@@ -346,3 +369,50 @@ func _nearest_prey(pos):
 					bd = dd
 					best = u
 	return best
+
+# 군대개미: 둥지 주변의 식량(씨앗·사체)이 떨어지면 군체 전체가 다음 식량 근처로 옮긴다
+func _nomad(main):
+	if migrating:
+		var moving = false
+		var all_marching = true
+		for b in game.buildings:
+			if b.pid != pid or not b.built:
+				continue
+			if b.mode != "camp":
+				moving = true
+			if b.mode != "march":
+				all_marching = false
+		if not moving:
+			migrating = false
+			return
+		if all_marching:
+			if main.position.distance_to(migrate_to) > 70.0:
+				if main.march_dest == null:
+					game.order_march(main, migrate_to)
+			else:
+				# 도착: 야영. 자리가 안 맞는 건물은 조금 옮겨서 다시 시도한다
+				for b in game.buildings:
+					if b.pid == pid and b.mode == "march" and b.march_dest == null and not b.unpack():
+						b.march_to(b.position + Vector2(70, 0).rotated(randf() * TAU))
+		return
+	nomad_t -= 1.0
+	if nomad_t > 0.0 or game.elapsed < 200.0 or attacking or defend_t > 0.0:
+		return
+	nomad_t = 10.0
+	var far = null
+	for n in game.res_nodes:
+		if n.res_type() != "food" or n.kind == "aphid" or not n.available():
+			continue
+		var dd = n.position.distance_to(main.position)
+		if dd < 650.0:
+			return      # 아직 주변에 먹을 것이 있다
+		if far == null or dd < far.position.distance_to(main.position):
+			far = n
+	if far == null:
+		return
+	var spot = _find_spot("nest", far.position + (main.position - far.position).normalized() * 150.0)
+	if spot == null:
+		return
+	migrate_to = spot
+	migrating = true
+	game.pack_colony(pid, true)

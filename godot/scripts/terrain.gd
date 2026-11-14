@@ -12,12 +12,15 @@ var w = 0
 var h = 0
 var cells = PackedByteArray()
 var nav = {}             # "ground" / "raft" -> AStarGrid2D
+var bridged = PackedInt32Array()   # 칸마다 그 위에 걸린 살아있는 다리 수
 
 func setup():
 	w = int(ceil(Data.MAP_SIZE.x / Data.FOG_CELL))
 	h = int(ceil(Data.MAP_SIZE.y / Data.FOG_CELL))
 	cells.resize(w * h)
 	cells.fill(GROUND)
+	bridged.resize(w * h)
+	bridged.fill(0)
 	for r in Data.TERRAIN:
 		_fill(r[0], r[1], false)
 		_fill(r[0], r[1], true)
@@ -66,7 +69,33 @@ func kind_at(pos):
 	return cells[c.y * w + c.x]
 
 func passable(pos, layer):
-	return _open_kind(kind_at(pos), layer)
+	if _open_kind(kind_at(pos), layer):
+		return true
+	# 다리 개미가 이어 놓은 물·절벽은 지상 유닛이 건널 수 있다
+	if layer == "ground":
+		var c = cell(pos)
+		return bridged[c.y * w + c.x] > 0
+	return false
+
+func on_bridge(pos):
+	var c = cell(pos)
+	return bridged[c.y * w + c.x] > 0
+
+# 다리 개미가 거점화(delta +1)하거나 풀 때(-1) 주변의 물·절벽 칸을 잇거나 끊는다
+func add_bridge(pos, r, delta):
+	var c0 = cell(pos - Vector2(r, r))
+	var c1 = cell(pos + Vector2(r, r))
+	for y in range(c0.y, c1.y + 1):
+		for x in range(c0.x, c1.x + 1):
+			var k = cells[y * w + x]
+			if k != WATER and k != CLIFF:
+				continue
+			var center = Vector2((x + 0.5) * Data.FOG_CELL, (y + 0.5) * Data.FOG_CELL)
+			if center.distance_to(pos) > r:
+				continue
+			var i = y * w + x
+			bridged[i] = max(0, bridged[i] + delta)
+			nav["ground"].set_point_solid(Vector2i(x, y), bridged[i] == 0)
 
 func speed_mult(pos, layer):
 	if layer == "ground" and kind_at(pos) == TREE:
@@ -96,7 +125,7 @@ func nearest_open(pos, layer):
 					continue
 				if max(abs(x - c.x), abs(y - c.y)) != r:
 					continue
-				if _open_kind(cells[y * w + x], layer):
+				if _open_kind(cells[y * w + x], layer) or (layer == "ground" and bridged[y * w + x] > 0):
 					var p = Vector2((x + 0.5) * Data.FOG_CELL, (y + 0.5) * Data.FOG_CELL)
 					var dd = p.distance_squared_to(pos)
 					if dd < bd:

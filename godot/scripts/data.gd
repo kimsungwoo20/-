@@ -175,6 +175,32 @@ const UNITS = {
 	"diver": {"name": "낙하 사냥꾼", "food": 140, "mat": 100, "pop": 3.0, "time": 50.0, "tier": 2,
 		"hp": 110.0, "dmg": 14.0, "cd": 1.2, "reach": 6.0, "speed": 120.0, "radius": 7.0, "batch": 1,
 		"air": true, "hits_air": true, "snap": true, "dive": true},
+	# ---- 군대개미 ----
+	"raider": {"name": "약탈병", "food": 50, "mat": 0, "pop": 1.0, "time": 12.5, "tier": 1,
+		"hp": 45.0, "dmg": 6.0, "cd": 0.8, "reach": 4.0, "speed": 125.0, "radius": 5.5, "batch": 1},
+	"sickle": {"name": "낫턱 병정", "food": 120, "mat": 40, "pop": 3.0, "time": 45.0, "tier": 2,
+		"hp": 130.0, "dmg": 22.0, "cd": 1.0, "reach": 5.0, "speed": 95.0, "radius": 8.5, "batch": 1},
+	# 포식 대군: 주변 범위 피해, 처치할 때마다 회복. 고유 진화 "포식의 물결" 필요
+	"horde": {"name": "포식 대군", "food": 300, "mat": 200, "pop": 6.0, "time": 60.0, "tier": 3,
+		"hp": 700.0, "dmg": 20.0, "cd": 0.9, "reach": 8.0, "speed": 80.0, "radius": 15.0, "batch": 1,
+		"aoe": 34.0, "aoe_mult": 1.0, "feast": true, "needs": "predator_wave"},
+	# 수호병: 행군 중인 아군 건물 근처에서 받는 피해 감소
+	"warden": {"name": "수호병", "food": 70, "mat": 0, "pop": 2.0, "time": 17.5, "tier": 1,
+		"hp": 140.0, "dmg": 6.0, "cd": 1.0, "reach": 4.0, "speed": 85.0, "radius": 7.5, "batch": 1, "escort": true},
+	# 다리 개미: 거점화하면 주변 물·절벽이 건널 수 있는 다리가 되고, 가까운 공중 유닛을 공격한다
+	"bridge": {"name": "다리 개미", "food": 90, "mat": 30, "pop": 2.0, "time": 34.0, "tier": 2,
+		"hp": 160.0, "dmg": 6.0, "cd": 1.0, "reach": 4.0, "speed": 75.0, "radius": 8.0, "batch": 1,
+		"root": true, "bridge": true},
+	"vanguard": {"name": "선발 정찰병", "food": 40, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
+		"hp": 35.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 130.0, "radius": 4.5, "batch": 1,
+		"sight": 300.0, "detect": 280.0},
+	# 운반병: 이동식 반납 지점
+	"porter": {"name": "운반병", "food": 80, "mat": 40, "pop": 2.0, "time": 30.0, "tier": 2,
+		"hp": 120.0, "dmg": 0.0, "cd": 1.0, "reach": 0.0, "speed": 80.0, "radius": 9.0, "batch": 1, "depot": true},
+	# 날개 수개미: 가장 빠른 공중 유닛. 공중 유닛만 공격
+	"drone": {"name": "날개 수개미", "food": 80, "mat": 70, "pop": 2.0, "time": 34.0, "tier": 2,
+		"hp": 60.0, "dmg": 10.0, "cd": 0.9, "reach": 14.0, "speed": 150.0, "radius": 6.0, "batch": 1,
+		"air": true, "hits_air": true, "air_only": true, "sight": 300.0},
 	# ---- 불개미 ----
 	# 보모 개미: 근처에서 아군 침병·병정개미가 죽으면 가까운 생산 건물의 진행도를 앞당긴다
 	"nurse": {"name": "보모 개미", "food": 50, "mat": 20, "pop": 1.0, "time": 17.0, "tier": 2,
@@ -279,7 +305,54 @@ const FACTIONS = {
 		"hidden_buildings": true,          # 본진 외 건물은 은폐(감지 범위 안에서만 보이고 공격받는다)
 		"garden": [0, 0, 0, 0],
 	},
+	"army": {
+		"name": "군대개미",
+		"buildings": {
+			"nest": {"name": "비부악", "produces": ["worker"]},
+			"combat": {"name": "약탈대 대열", "produces": ["raider", "sickle", "horde"]},
+			"defense": {"name": "호위대 대열", "produces": ["warden", "bridge"]},
+			"special": {"name": "선발대 대열", "produces": ["vanguard", "porter", "drone"]},
+			"lab": {"name": "여왕 근위 회랑", "produces": []},
+		},
+		"sat_nest_mult": 1.0,
+		"upkeep": UPKEEP_COMMON,
+		"mat_carry_bonus": 0.0,
+		"garden": [0, 0, 0, 0],
+		"mobile": true,                    # 모든 건물이 야영 ↔ 행군 전환
+		"building_mult": 0.6,              # 살아있는 건축: 건물 재료 비용 -40%
+		"building_pop": 3.0,               # 대신 본진 외 건물 1동당 인구 3 점유
+		"loot": true,                      # 약탈: 적 일꾼·건물 처치 시 자원
+		"no_aphid": true,                  # 포식: 진딧물은 채집하지 못하고 도살만
+		"corpse_harvest": 0.6,             # 사체 채집 시간 배율
+		"sight_mult": 0.7,                 # 시야가 좁다(선발 정찰병·날개 수개미 제외)
+	},
 }
+
+# ---- 야영과 행군 (군대개미) ----
+const PACK_TIME = 10.0                 # 야영 → 행군 전환
+const UNPACK_TIME = 15.0               # 행군 → 야영 전환
+const PACK_TIME_WANDER = 2.0           # 영원한 유랑
+const UNPACK_TIME_WANDER = 3.0
+const PACK_TIME_STATARY = 20.0         # 정주기 산란
+const MARCH_SPEED = 35.0
+const MARCH_SPEED_GREAT = 55.0         # 대행군
+const MARCH_PRODUCTION = 0.5           # 행군 중 유닛 생산 속도
+const MARCH_PRODUCTION_GREAT = 0.75
+const MARCH_TAKEN = 1.25               # 야영 중이 아닌 건물이 받는 피해
+const STATARY_AFTER = 60.0             # 정주기 산란: 야영이 이만큼 이어지면
+const STATARY_SPEED = 1.5              # 생산 속도 배율
+const LOOT_RATE = 0.2                  # 약탈: 대상 비용의 20%
+const LOOT_RATE_INSTINCT = 0.35        # 약탈 본능
+const LOOT_COMBAT_RATE = 0.1           # 약탈 본능: 전투 유닛 처치 시
+const ESCORT_RADIUS = 200.0
+const ESCORT_TAKEN = 0.7               # 수호병: 행군 중인 아군 건물 근처에서 받는 피해
+const BRIDGE_RADIUS = 80.0
+const BRIDGE_RADIUS_LIVING = 120.0     # 살아있는 다리
+const BRIDGE_SPEED = 1.3               # 살아있는 다리: 다리 위 아군 이동 속도
+const TOWER_REACH = 110.0              # 살아있는 탑: 거점화한 다리 개미의 대공 사거리
+const FEAST_HEAL = 0.15                # 포식 대군: 처치 시 최대 체력의 15% 회복
+const HOOK_TIME = 2.0
+const HOOK_SLOW = 0.7
 
 # ---- 턱 타격 (함정턱개미) ----
 const SNAP_MULT = 3.0                  # 충전된 턱 타격 피해 배율
@@ -374,6 +447,9 @@ static func faction_building(f, kind):
 	if kind == "nest":
 		out["mat"] = int(round(out["mat"] * fd["sat_nest_mult"]))
 		out["time"] = out["time"] * fd["sat_nest_mult"]
+	out["mat"] = int(round(out["mat"] * fd.get("building_mult", 1.0)))
+	# 본진 외 건물이 차지하는 인구(군대개미)
+	out["pop"] = fd.get("building_pop", 0.0) if kind != "nest" else 0.0
 	return out
 
 # 연구. tier: 필요한 주 둥지 등급, req: 선행 연구, group: 같은 group 은 하나만 선택(분기 진화)
@@ -474,6 +550,20 @@ const RESEARCH = {
 		"tip": "주변 200 안에 아군이 없으면 공격력·이동 속도 +30%, 아군 1기당 -10%p. 사냥 무리와 동시 선택 불가", "req": "", "group": "branch", "faction": "trap"},
 	"pack": {"name": "[분기] 사냥 무리", "cat": "unique", "line": "pack", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
 		"tip": "0.5초 안에 3기 이상이 가까이서 턱 타격을 하면 충격파(범위 80, 피해 40). 고독한 사냥꾼과 동시 선택 불가", "req": "", "group": "branch", "faction": "trap"},
+	"hook_jaw": {"name": "갈고리 턱", "cat": "body", "line": "hook_jaw", "lvl": 1, "tier": 2, "mat": 200, "food": 100, "time": 90.0,
+		"tip": "전투 유닛에게 맞은 적은 2초 동안 이동 속도 -30%", "req": "", "group": "", "faction": "army"},
+	"great_march": {"name": "대행군", "cat": "unique", "line": "great_march", "lvl": 1, "tier": 2, "mat": 200, "food": 0, "time": 75.0,
+		"tip": "행군 속도 증가, 행군 중 생산 속도 50% → 75%", "req": "", "group": "", "faction": "army"},
+	"loot_instinct": {"name": "약탈 본능", "cat": "unique", "line": "loot_instinct", "lvl": 1, "tier": 2, "mat": 150, "food": 50, "time": 60.0,
+		"tip": "약탈 20% → 35%. 적 전투 유닛을 처치해도 비용의 10% 를 식량으로 얻는다", "req": "", "group": "", "faction": "army"},
+	"living_bridge": {"name": "살아있는 다리", "cat": "unique", "line": "living_bridge", "lvl": 1, "tier": 2, "mat": 150, "food": 50, "time": 60.0,
+		"tip": "다리 개미가 더 넓은 범위를 잇고, 다리 위 아군 이동 속도 +30%", "req": "", "group": "", "faction": "army"},
+	"predator_wave": {"name": "포식의 물결", "cat": "unique", "line": "predator_wave", "lvl": 1, "tier": 3, "mat": 250, "food": 0, "time": 90.0,
+		"tip": "포식 대군 생산 가능", "req": "", "group": "", "faction": "army"},
+	"eternal_wander": {"name": "[분기] 영원한 유랑", "cat": "unique", "line": "eternal_wander", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
+		"tip": "야영·행군 전환 10초/15초 → 2초/3초. 행군 중에도 일꾼 생산. 정주기 산란과 동시 선택 불가", "req": "", "group": "branch", "faction": "army"},
+	"statary_brood": {"name": "[분기] 정주기 산란", "cat": "unique", "line": "statary_brood", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,
+		"tip": "야영이 60초 넘게 이어지면 모든 생산 속도 1.5배. 행군 전환 10초 → 20초. 영원한 유랑과 동시 선택 불가", "req": "", "group": "branch", "faction": "army"},
 	"tyrant_blood": {"name": "폭군의 혈통", "cat": "unique", "line": "tyrant_blood", "lvl": 1, "tier": 3, "mat": 250, "food": 0, "time": 90.0,
 		"tip": "폭군 대병 생산 가능", "req": "", "group": "", "faction": "fire"},
 	"wave": {"name": "[분기] 끝없는 물결", "cat": "unique", "line": "wave", "lvl": 1, "tier": 3, "mat": 300, "food": 150, "time": 120.0,

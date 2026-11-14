@@ -28,6 +28,14 @@ var stealthed = false
 var gardeners = []      # 균류 정원 안에서 일하는 일꾼(잎꾼개미)
 var garden_buf = 0.0
 var net_ok = true       # 베짜기개미: 주 둥지와 영역이 이어져 있는가
+# 군대개미: camp(야영) / packing(행군 준비) / march(행군) / unpacking(야영 준비)
+var mode = "camp"
+var mode_t = 0.0
+var camp_t = 0.0        # 야영이 이어진 시간
+var march_dest = null
+var path = []
+var nav_t = 0.0
+var pop_cost = 0.0      # 군대개미: 건물이 차지하는 인구
 
 func setup(g, p, k, pos, finished, main):
 	game = g
@@ -40,6 +48,7 @@ func setup(g, p, k, pos, finished, main):
 	radius = d["radius"]
 	position = pos
 	is_main = main
+	pop_cost = d.get("pop", 0.0)
 	# 함정턱개미: 본진 외 건물은 은폐
 	if kind != "nest" and Data.FACTIONS.get(g.players[p].faction, {}).get("hidden_buildings", false):
 		stealthed = true
@@ -50,6 +59,93 @@ func setup(g, p, k, pos, finished, main):
 	else:
 		hp = max_hp * 0.1
 	rally_pos = pos + (Data.MAP_SIZE / 2.0 - pos).normalized() * (radius + 40.0)
+
+# ---------- 야영과 행군 (군대개미) ----------
+
+func is_mobile():
+	return Data.FACTIONS.get(game.players[pid].faction, {}).get("mobile", false)
+
+func camped():
+	return mode == "camp"
+
+func pack_time():
+	var p = game.players[pid]
+	if p.has("eternal_wander"):
+		return Data.PACK_TIME_WANDER
+	if p.has("statary_brood"):
+		return Data.PACK_TIME_STATARY
+	return Data.PACK_TIME
+
+func unpack_time():
+	return Data.UNPACK_TIME_WANDER if game.players[pid].has("eternal_wander") else Data.UNPACK_TIME
+
+# 행군 준비 시작
+func pack():
+	if not built or not is_mobile() or mode != "camp":
+		return false
+	mode = "packing"
+	mode_t = pack_time()
+	camp_t = 0.0
+	return true
+
+# 야영 준비 시작. 지을 수 없는 자리면 실패
+func unpack():
+	if mode != "march":
+		return false
+	if not game.can_camp(self):
+		return false
+	mode = "unpacking"
+	mode_t = unpack_time()
+	march_dest = null
+	path = []
+	return true
+
+func march_to(pos):
+	if mode != "march" and mode != "packing":
+		return false
+	march_dest = game.terrain.nearest_open(pos, "ground")
+	path = []
+	nav_t = 0.0
+	return true
+
+func _tick_mobile(delta):
+	if mode == "camp":
+		camp_t += delta
+		return
+	if mode == "packing":
+		mode_t -= delta
+		if mode_t <= 0.0:
+			mode = "march"
+			game.on_building_done(self)
+	elif mode == "unpacking":
+		mode_t -= delta
+		if mode_t <= 0.0:
+			mode = "camp"
+			camp_t = 0.0
+			rally_pos = position + (Data.MAP_SIZE / 2.0 - position).normalized() * (radius + 40.0)
+			game.on_building_done(self)
+	elif mode == "march" and march_dest != null:
+		var t = game.terrain
+		nav_t -= delta
+		if nav_t <= 0.0:
+			nav_t = 0.5
+			if t.line_clear(position, march_dest, "ground"):
+				path = []
+			else:
+				path = t.find_path(position, march_dest, "ground")
+		while path.size() > 0 and position.distance_to(path[0]) < 14.0:
+			path.remove_at(0)
+		var aim = march_dest
+		if path.size() > 0:
+			aim = path[0]
+		var to = aim - position
+		if position.distance_to(march_dest) < 6.0:
+			march_dest = null
+			return
+		var sp = Data.MARCH_SPEED_GREAT if game.players[pid].has("great_march") else Data.MARCH_SPEED
+		var np = position + to.normalized() * min(sp * delta, to.length())
+		if t.passable(np, "ground"):
+			position = np
 
 func garden_slots():
 	var f = game.players[pid].faction
@@ -145,10 +241,12 @@ func _physics_process(delta):
 		queue_redraw()
 		return
 	var p = game.players[pid]
+	_tick_mobile(delta)
 	if net_ok and hp < max_hp and p.has("fortress"):
 		hp = min(max_hp, hp + Data.FORT_REGEN * delta)
 	if kind == "nest":
-		_defend(delta)
+		if camped():
+			_defend(delta)
 		_tick_garden(delta)
 	if upgrade_t >= 0.0:
 		upgrade_t += delta
@@ -159,7 +257,11 @@ func _physics_process(delta):
 	if queue.size() > 0:
 		var it = queue[0]
 		var blocked = false
-		if not it["started"]:
+		# 행군 중: 연구와 일꾼 생산 정지(영원한 유랑이면 일꾼은 생산), 유닛 생산은 느려진다
+		var moving = not camped()
+		if moving and (it["type"] == "research" or (it["id"] == "worker" and not p.has("eternal_wander"))):
+			blocked = true
+		elif not it["started"]:
 			if it["type"] == "unit":
 				if kind == "nest" and p.succession > 0.0:
 					blocked = true
@@ -173,6 +275,10 @@ func _physics_process(delta):
 				it["started"] = true
 		if not blocked:
 			var speed = 1.0
+			if moving:
+				speed *= Data.MARCH_PRODUCTION_GREAT if p.has("great_march") else Data.MARCH_PRODUCTION
+			elif p.has("statary_brood") and camp_t >= Data.STATARY_AFTER:
+				speed *= Data.STATARY_SPEED
 			if not net_ok:
 				speed *= Data.TERR_CUT_PRODUCTION     # 끊어진 구역의 건물은 생산이 느리다
 			if it["type"] == "unit":
@@ -230,9 +336,11 @@ func _defend(delta):
 	else:
 		atk_cd = 0.3
 
-func take_damage(amount, _attacker):
+func take_damage(amount, attacker):
 	if dead:
 		return
+	if not camped():
+		amount *= Data.MARCH_TAKEN      # 야영 중이 아닌 건물은 약하다
 	hp -= amount
 	game.notify_attacked(self)
 	if hp <= 0.0:
@@ -244,6 +352,7 @@ func take_damage(amount, _attacker):
 				u.dead = true
 				game.remove_unit(u)
 		gardeners.clear()
+		game.on_kill(attacker, self)
 		game.remove_building(self)
 
 func refund_queue():
@@ -261,6 +370,15 @@ func _draw():
 		a = 0.55
 	if selected:
 		draw_arc(Vector2.ZERO, radius + 6.0, 0.0, TAU, 40, Color(0.3, 1.0, 0.3), 2.0)
+	if mode != "camp":
+		# 행군 중인 건물: 흩어진 개미 무리처럼 점선 테두리
+		for i in 12:
+			draw_arc(Vector2.ZERO, radius + 2.0, i * TAU / 12.0, i * TAU / 12.0 + 0.3, 4, Color(1, 1, 1, 0.7), 2.0)
+		if mode != "march":
+			var total = pack_time() if mode == "packing" else unpack_time()
+			draw_arc(Vector2.ZERO, radius + 9.0, -PI / 2.0, -PI / 2.0 + TAU * (1.0 - mode_t / total), 24, Color(1.0, 0.8, 0.3), 2.5)
+		if march_dest != null and selected:
+			draw_line(Vector2.ZERO, march_dest - position, Color(1, 1, 1, 0.35), 1.0)
 	var base = Color(0.3, 0.22, 0.14, a)
 	draw_circle(Vector2.ZERO, radius, base)
 	draw_circle(Vector2.ZERO, radius * 0.78, Color(c.r, c.g, c.b, a).darkened(0.35))

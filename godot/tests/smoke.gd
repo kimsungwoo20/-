@@ -1090,6 +1090,280 @@ func trap_checks(game):
 	check(game.enqueue_unit(kc, "king"), "포식자의 왕 연구 후 생산 가능")
 	game.cancel_last(kc)
 
+	await army_checks(game)
+
+func army_checks(game):
+	# 플레이어 1 을 군대개미로 바꿔서 확인한다
+	var A = game.players[1]
+	var F = game.players[0]
+	A.faction = "army"
+	A.research.clear()
+	A.food = 99999.0
+	A.mat = 99999.0
+	clear_units(game)
+	for b in game.buildings.duplicate():
+		if b.pid == 1 and not (b.kind == "nest" and b.is_main):
+			b.dead = true
+			game.remove_building(b)
+	await wait(0.3)
+	var fm = F.taken_mult()
+	var mn = game.main_nest(1)
+	var T = game.terrain
+
+	# 살아있는 건축
+	check(game.bdata(1, "combat")["mat"] == 90 and game.bdata(1, "nest")["mat"] == 150 and game.bdata(0, "combat")["mat"] == 150, "건물 재료 비용 -40% (전투 생산 90, 위성 둥지 150)")
+	var pop0 = A.pop_used
+	var X = game.start_build(1, "combat", Vector2(2500, 1300), [])
+	check(X != null, "약탈대 대열 건설")
+	X.add_build(1000.0)
+	await wait(0.1)
+	check(abs(A.pop_used - pop0 - 3.0) < 0.01, "건물 1동이 인구 3 차지")
+	var cap = A.pop_cap
+	var filler = game.spawn_unit(1, "raider", Vector2(2900, 300))
+	filler.pop = cap - A.pop_used - 1.0
+	await wait(0.1)
+	check(game.start_build(1, "defense", Vector2(2500, 1500), []) == null, "인구가 모자라면 건물을 지을 수 없다")
+	filler.dead = true
+	game.remove_unit(filler)
+	await wait(0.1)
+
+	# 야영과 행군
+	check(X.camped() and X.is_mobile() and not game.main_nest(0).is_mobile(), "군대개미 건물만 행군할 수 있다")
+	game.enqueue_unit(X, "raider")
+	await wait(0.2)
+	var pr = X.queue[0]["progress"]
+	var e0 = game.elapsed
+	await wait(1.0)
+	var rate_camp = (X.queue[0]["progress"] - pr) / (game.elapsed - e0)
+	check(X.pack() and X.mode == "packing", "행군 준비 시작")
+	Engine.time_scale = 4.0
+	await wait(Data.PACK_TIME / 4.0 + 0.3)
+	Engine.time_scale = 1.0
+	check(X.mode == "march", "%d초 뒤 행군 상태" % int(Data.PACK_TIME))
+	pr = X.queue[0]["progress"]
+	e0 = game.elapsed
+	await wait(1.0)
+	var rate_march = (X.queue[0]["progress"] - pr) / (game.elapsed - e0)
+	check(abs(rate_camp - 1.0) < 0.03 and abs(rate_march - Data.MARCH_PRODUCTION) < 0.03, "행군 중 유닛 생산 속도 50%% (%.2f → %.2f)" % [rate_camp, rate_march])
+	game.cancel_last(X)
+	var x0 = X.position
+	check(X.march_to(x0 + Vector2(0, 150)), "행군 이동 명령")
+	e0 = game.elapsed
+	await wait(2.0)
+	var v = X.position.distance_to(x0) / (game.elapsed - e0)
+	check(abs(v - Data.MARCH_SPEED) < 2.0, "행군 속도 %d (실제 %.1f)" % [int(Data.MARCH_SPEED), v])
+	var hp0 = X.hp
+	X.take_damage(100.0, null)
+	check(abs((hp0 - X.hp) - 125.0) < 0.01, "행군 중인 건물은 피해를 25% 더 받는다")
+	A.research["great_march"] = true
+	x0 = X.position
+	e0 = game.elapsed
+	await wait(1.0)
+	v = X.position.distance_to(x0) / (game.elapsed - e0)
+	check(abs(v - Data.MARCH_SPEED_GREAT) < 2.0, "대행군: 행군 속도 %d (실제 %.1f)" % [int(Data.MARCH_SPEED_GREAT), v])
+	A.research.erase("great_march")
+	# 야영할 수 없는 자리
+	X.position = Vector2(2900, 1340)      # 수목 위
+	X.march_dest = null
+	check(not X.unpack() and X.mode == "march", "수목 위에는 야영할 수 없다")
+	X.position = Vector2(2500, 1300)
+	check(X.unpack() and X.mode == "unpacking", "맨땅에서는 야영 준비 시작")
+	Engine.time_scale = 4.0
+	await wait(Data.UNPACK_TIME / 4.0 + 0.3)
+	Engine.time_scale = 1.0
+	check(X.camped(), "%d초 뒤 야영 상태" % int(Data.UNPACK_TIME))
+
+	# 주 둥지 행군: 일꾼 생산·반납 정지, 군체 대형 이동
+	var wk = game.spawn_unit(1, "worker", mn.position + Vector2(80, 0))
+	await wait(0.1)
+	check(game.nearest_nest(1, wk.position) == mn, "야영 중인 둥지는 반납 지점")
+	game.pack_colony(1, true)
+	Engine.time_scale = 4.0
+	await wait(Data.PACK_TIME / 4.0 + 0.3)
+	Engine.time_scale = 1.0
+	check(mn.mode == "march" and X.mode == "march", "군체 전체 행군")
+	check(game.nearest_nest(1, wk.position) == null, "행군 중인 둥지에는 자원을 반납할 수 없다")
+	var porter = game.spawn_unit(1, "porter", wk.position + Vector2(40, 0))
+	await wait(0.1)
+	check(game.nearest_nest(1, wk.position) == porter, "운반병은 이동식 반납 지점")
+	wk.carry = 10.0
+	wk.carry_res = "food"
+	wk.state = wk.RETURN
+	var f0 = A.food
+	await wait(1.5)
+	check(wk.carry == 0.0 and A.food >= f0 + 10.0, "일꾼이 운반병에게 자원을 반납한다")
+	game.enqueue_unit(mn, "worker")
+	await wait(1.0)
+	check(mn.queue[0]["progress"] == 0.0, "행군 중에는 일꾼 생산 정지")
+	A.research["eternal_wander"] = true
+	await wait(1.0)
+	check(mn.queue[0]["progress"] > 0.0, "영원한 유랑: 행군 중에도 일꾼 생산")
+	check(mn.pack_time() == Data.PACK_TIME_WANDER and mn.unpack_time() == Data.UNPACK_TIME_WANDER, "영원한 유랑: 전환 %d초 / %d초" % [int(Data.PACK_TIME_WANDER), int(Data.UNPACK_TIME_WANDER)])
+	A.research.erase("eternal_wander")
+	game.cancel_last(mn)
+	var off = X.position - mn.position
+	game.order_march(mn, mn.position + Vector2(-100, 0))
+	await wait(0.1)
+	check(X.march_dest != null and X.march_dest.distance_to(mn.march_dest + off) < 40.0, "주 둥지를 움직이면 다른 건물도 대형을 유지하며 따라온다")
+	var foe = dummy(game, 0, "stinger", mn.position + Vector2(100, 0))
+	foe.can_fight = false
+	await wait(1.5)
+	check(foe.hp == 9999.0, "행군 중인 둥지는 수비 공격을 하지 않는다")
+	mn.march_dest = null
+	X.march_dest = null
+	game.pack_colony(1, false)
+	Engine.time_scale = 4.0
+	await wait(Data.UNPACK_TIME / 4.0 + 0.5)
+	Engine.time_scale = 1.0
+	check(mn.camped() and X.camped(), "군체 전체 야영")
+	A.research["statary_brood"] = true
+	check(mn.pack_time() == Data.PACK_TIME_STATARY, "정주기 산란: 행군 전환 %d초" % int(Data.PACK_TIME_STATARY))
+	game.enqueue_unit(X, "raider")
+	await wait(0.2)
+	X.camp_t = Data.STATARY_AFTER + 1.0
+	pr = X.queue[0]["progress"]
+	e0 = game.elapsed
+	await wait(1.0)
+	check(abs((X.queue[0]["progress"] - pr) / (game.elapsed - e0) - Data.STATARY_SPEED) < 0.04, "정주기 산란: 야영 60초 뒤 생산 속도 1.5배")
+	game.cancel_last(X)
+	A.research.erase("statary_brood")
+	clear_units(game)
+
+	# 약탈
+	var spot = Vector2(2300, 700)
+	var rd = game.spawn_unit(1, "raider", spot)
+	var prey = game.spawn_unit(0, "worker", spot + Vector2(14, 0))
+	f0 = A.food
+	prey.take_damage(9999.0, rd)
+	check(abs(A.food - f0 - 10.0) < 0.01, "적 일꾼 처치: 식량 +10 (비용의 20%)")
+	var loot_b = game.spawn_building(0, "combat", spot + Vector2(0, 200), true, false)
+	f0 = A.food
+	var m0 = A.mat
+	loot_b.take_damage(99999.0, rd)
+	check(abs(A.food - f0 - 30.0) < 0.01 and abs(A.mat - m0 - 30.0) < 0.01, "적 건물 파괴: 식량 +30, 재료 +30")
+	var soldier = game.spawn_unit(0, "soldier", spot + Vector2(14, 0))
+	f0 = A.food
+	soldier.take_damage(9999.0, rd)
+	check(A.food == f0, "전투 유닛 처치는 약탈 없음")
+	A.research["loot_instinct"] = true
+	soldier = game.spawn_unit(0, "soldier", spot + Vector2(14, 0))
+	f0 = A.food
+	soldier.take_damage(9999.0, rd)
+	check(abs(A.food - f0 - 3.0) < 0.01, "약탈 본능: 전투 유닛 처치 시 비용의 10% (병정개미 1기 = 3)")
+	prey = game.spawn_unit(0, "worker", spot + Vector2(14, 0))
+	f0 = A.food
+	prey.take_damage(9999.0, rd)
+	check(abs(A.food - f0 - 17.5) < 0.01, "약탈 본능: 일꾼 약탈 35%")
+	A.research.erase("loot_instinct")
+	var fire_killer = game.spawn_unit(0, "stinger", spot + Vector2(0, 40))
+	var my_worker = game.spawn_unit(1, "worker", spot + Vector2(14, 40))
+	f0 = F.food
+	my_worker.take_damage(9999.0, fire_killer)
+	check(F.food == f0, "다른 진영은 약탈하지 못한다")
+	clear_units(game)
+
+	# 포식: 진딧물은 도살만
+	var aph = null
+	for n in game.res_nodes:
+		if n.kind == "aphid" and n.attackable() and n.position.x > 2000:
+			aph = n
+			break
+	var aw = game.spawn_unit(1, "worker", aph.position + Vector2(40, 0))
+	aw.cmd_gather(aph)
+	check(aw.state == aw.ATTACK and aw.target == aph, "군대개미 일꾼은 진딧물을 채집하지 않고 도살한다")
+	var nn = game.nearest_node(aw.position, "food", aw)
+	check(nn == null or nn.kind != "aphid", "가장 가까운 식량 지점 탐색에서 진딧물 제외")
+	check(aw.fac.get("corpse_harvest", 1.0) == 0.6, "사체 채집 시간 60%")
+	clear_units(game)
+
+	# 시야, 공중 전용 공격
+	var r2 = game.spawn_unit(1, "raider", spot)
+	var vg = game.spawn_unit(1, "vanguard", spot)
+	check(abs(r2.sight() - Data.SIGHT_UNIT * 0.7) < 0.01 and vg.sight() == 300.0, "군대개미는 시야가 좁고 선발 정찰병만 넓다")
+	clear_units(game)
+	var dr = game.spawn_unit(1, "drone", spot)
+	var gtarget = dummy(game, 0, "soldier", spot + Vector2(20, 0))
+	var atarget = dummy(game, 0, "swarm", spot + Vector2(-20, 0))
+	await wait(2.0)
+	check(gtarget.hp == 9999.0 and atarget.hp < 9999.0, "날개 수개미는 공중 유닛만 공격한다")
+	clear_units(game)
+
+	# 수호병
+	var wd = game.spawn_unit(1, "warden", X.position + Vector2(80, 0))
+	await wait(0.6)
+	var wh = wd.hp
+	wd.take_damage(10.0, null)
+	check(abs((wh - wd.hp) - 10.0) < 0.01, "야영 중인 건물 옆에서는 수호병 보너스 없음")
+	X.mode = "march"
+	await wait(0.6)
+	wh = wd.hp
+	wd.take_damage(10.0, null)
+	check(abs((wh - wd.hp) - 7.0) < 0.01, "행군 중인 건물 근처의 수호병은 피해 -30%")
+	X.mode = "camp"
+	clear_units(game)
+
+	# 다리 개미: 절벽(x 1792~2144, y 480~544)을 잇는다
+	var north = Vector2(2000, 450)
+	var south = Vector2(2000, 580)
+	var mid = Vector2(2000, 512)
+	check(not T.passable(mid, "ground"), "절벽은 지상 유닛이 못 지나간다")
+	var br = game.spawn_unit(1, "bridge", Vector2(2000, 464))
+	br.toggle_root()
+	check(T.passable(mid, "ground") and T.kind_at(mid) == 2, "거점화한 다리 개미 주변 절벽을 건널 수 있다")
+	var walker = game.spawn_unit(1, "raider", north)
+	Engine.time_scale = 4.0
+	var res = await travel(game, walker, south, 8.0)
+	Engine.time_scale = 1.0
+	check(res[0] and res[2] < 3.0, "지상 유닛이 다리를 건너 절벽 반대편에 도착 (%.1f초)" % res[2])
+	var sky = dummy(game, 0, "swarm", br.position + Vector2(60, 0))
+	var grd = dummy(game, 0, "soldier", br.position + Vector2(60, -30))
+	await wait(2.0)
+	check(sky.hp < 9999.0 and grd.hp == 9999.0, "살아있는 탑: 거점화한 다리 개미가 가까운 공중 유닛을 공격")
+	sky.dead = true
+	game.remove_unit(sky)
+	grd.dead = true
+	game.remove_unit(grd)
+	walker.position = mid
+	br.toggle_root()
+	check(not T.passable(mid, "ground"), "거점화를 풀면 다리가 사라진다")
+	await wait(0.7)
+	check(T.passable(walker.position, "ground"), "다리 위에 있던 유닛은 가까운 땅으로 옮겨진다")
+	A.research["living_bridge"] = true
+	br.toggle_root()
+	check(br.bridge_r == Data.BRIDGE_RADIUS_LIVING, "살아있는 다리: 다리 범위 확대")
+	walker.position = mid
+	check(abs(walker.spd() - 125.0 * Data.BRIDGE_SPEED) < 0.01, "살아있는 다리: 다리 위 이동 속도 +30%")
+	br.take_damage(99999.0, null)
+	await wait(0.1)
+	check(not T.passable(mid, "ground"), "다리 개미가 죽으면 다리도 사라진다")
+	A.research.erase("living_bridge")
+	clear_units(game)
+
+	# 포식 대군, 갈고리 턱
+	mn.tier = 3
+	check(not game.enqueue_unit(X, "horde"), "포식의 물결 없이는 포식 대군 생산 불가")
+	A.research["predator_wave"] = true
+	check(game.enqueue_unit(X, "horde"), "포식의 물결 연구 후 생산 가능")
+	game.cancel_last(X)
+	var hd = game.spawn_unit(1, "horde", spot)
+	var t1 = dummy(game, 0, "soldier", spot + Vector2(26, 0))
+	var t2 = dummy(game, 0, "soldier", spot + Vector2(26, 20))
+	var hd1 = await hit_once(game, hd, t1)
+	check(abs(hd1 - 20.0 * fm) < 0.01 and abs((9999.0 - t2.hp) - 20.0 * fm) < 0.01, "포식 대군: 주변 적에게도 같은 피해")
+	hd.hp = 300.0
+	t1.hp = 5.0
+	await hit_once(game, hd, t2)
+	await wait(0.1)
+	check(hd.hp >= 300.0 + 700.0 * Data.FEAST_HEAL - 1.0, "포식 대군: 처치하면 체력 회복 (%.0f)" % hd.hp)
+	clear_units(game)
+	A.research["hook_jaw"] = true
+	var hk = game.spawn_unit(1, "raider", spot)
+	var slowed = dummy(game, 0, "soldier", spot + Vector2(14, 0))
+	var sp0 = slowed.spd()
+	await hit_once(game, hk, slowed)
+	check(abs(slowed.spd() - sp0 * Data.HOOK_SLOW) < 0.01, "갈고리 턱: 맞은 적 이동 속도 -30%")
+	clear_units(game)
+
 func _initialize():
 	Engine.time_scale = 1.0
 	var game = load("res://scenes/main.tscn").instantiate()

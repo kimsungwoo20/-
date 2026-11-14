@@ -9,6 +9,7 @@ var alive = true
 var neutral = false     # 중립 생물 전용 가상 플레이어
 var faction = "fire"
 var war_cd = 0.0         # 전쟁 균류 재사용 대기
+var looted = 0.0         # 약탈로 얻은 자원 합계
 var food = Data.START_FOOD
 var mat = Data.START_MAT
 var pop_used = 0.0

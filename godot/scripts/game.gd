@@ -51,6 +51,7 @@ var terr_lost = {}       # 고리 id -> 끊어진 뒤 지난 시간
 var terr_t = 0.0
 var curtains = []        # 펼쳐진 비단 장막: [위치, pid, 주인 영역 안인가]
 var terr_layer
+var has_depots = {}      # pid -> 운반병이 있는가
 
 var build_mode = ""
 var lab_tab = "body"
@@ -185,7 +186,7 @@ func _setup_map():
 	var starts = [start, _mirror(start)]
 	for i in 2:
 		var nest = spawn_building(i, "nest", starts[i], true, true)
-		nest.rally_node = nearest_node(nest.position, "food", null)
+		nest.rally_node = nearest_node(nest.position, "food", null, i)
 		for k in Data.START_WORKERS:
 			var u = spawn_unit(i, "worker", starts[i] + Vector2(60, 0).rotated(k * TAU / Data.START_WORKERS))
 			if not players[i].is_ai:
@@ -294,6 +295,7 @@ func spawn_building(pid, kind, pos, finished, main):
 # ---------- 제거 ----------
 
 func remove_unit(u):
+	u.drop_bridge()
 	for cu in u.cargo.duplicate():
 		if is_instance_valid(cu) and not cu.dead:
 			cu.dead = true
@@ -360,6 +362,10 @@ func _rebuild_grid():
 			if not detectors.has(b.pid):
 				detectors[b.pid] = []
 			detectors[b.pid].append([b.position, Data.DETECT_NEST])
+	has_depots.clear()
+	for u in units:
+		if u.d.get("depot", false):
+			has_depots[u.pid] = true
 	for u in units:
 		if u.detect_range() > 0.0 and not u.carried:
 			if not detectors.has(u.pid):
@@ -412,20 +418,20 @@ func is_hostile_target(u, pid):
 		return t != null and is_instance_valid(t) and t.get("pid") == pid
 	return true
 
-func find_enemy_unit(pos, pid, r, hits_air = true):
+func find_enemy_unit(pos, pid, r, hits_air = true, air_only = false):
 	var best = null
 	var bd = r
 	for u in query_units(pos, r):
-		if is_hostile_target(u, pid) and (hits_air or not u.air):
+		if is_hostile_target(u, pid) and (hits_air or not u.air) and (u.air or not air_only):
 			var dd = u.position.distance_to(pos)
 			if dd <= bd:
 				bd = dd
 				best = u
 	return best
 
-func find_enemy(pos, pid, r, hits_air = true):
-	var u = find_enemy_unit(pos, pid, r, hits_air)
-	if u != null:
+func find_enemy(pos, pid, r, hits_air = true, air_only = false):
+	var u = find_enemy_unit(pos, pid, r, hits_air, air_only)
+	if u != null or air_only:
 		return u
 	var best = null
 	var bd = r
@@ -441,11 +447,19 @@ func nearest_nest(pid, pos):
 	var best = null
 	var bd = 1e12
 	for b in buildings:
-		if b.pid == pid and b.kind == "nest" and b.built and not b.dead:
+		if b.pid == pid and b.kind == "nest" and b.built and not b.dead and b.camped():
 			var dd = b.position.distance_squared_to(pos)
 			if dd < bd:
 				bd = dd
 				best = b
+	# 운반병은 이동식 반납 지점이다
+	if has_depots.get(pid, false):
+		for u in units:
+			if u.pid == pid and u.d.get("depot", false) and not u.dead and not u.carried:
+				var dd = u.position.distance_squared_to(pos)
+				if dd < bd:
+					bd = dd
+					best = u
 	return best
 
 func main_nest(pid):
@@ -468,11 +482,16 @@ func node_load(n):
 	return c
 
 # 가장 가까운 채집 가능 지점. 이미 일꾼이 몰린 지점은 뒤로 미룬다.
-func nearest_node(pos, res, _who):
+func nearest_node(pos, res, who, pid = -1):
+	if who != null:
+		pid = who.pid
+	var no_aphid = pid >= 0 and Data.FACTIONS.get(players[pid].faction, {}).get("no_aphid", false)
 	var best = null
 	var bs = 1e12
 	for n in res_nodes:
 		if n.res_type() != res or not n.available():
+			continue
+		if no_aphid and n.kind == "aphid":
 			continue
 		var score = n.position.distance_to(pos)
 		if node_load(n) >= n.d["slots"] + 2:
@@ -621,7 +640,18 @@ func carrier_pulse(m, dt):
 		if b.pid == m.pid and b.built and b.hp < b.max_hp and b.position.distance_to(m.position) <= Data.CARRIER_RADIUS + b.radius:
 			b.hp = min(b.max_hp, b.hp + Data.CARRIER_REPAIR * dt)
 
+func _draw_bridges():
+	var t = terrain
+	var cs = Data.FOG_CELL
+	for y in t.h:
+		for x in t.w:
+			if t.bridged[y * t.w + x] > 0:
+				var r = Rect2(x * cs, y * cs, cs, cs)
+				terr_layer.draw_rect(r, Color(0.55, 0.4, 0.22, 0.9))
+				terr_layer.draw_line(r.position + Vector2(0, cs * 0.5), r.position + Vector2(cs, cs * 0.5), Color(0.35, 0.25, 0.12), 2.0)
+
 func _draw_territory():
+	_draw_bridges()
 	for pid in terr_nodes:
 		var mine = (pid == human_id)
 		for n in terr_nodes[pid]:
@@ -632,6 +662,97 @@ func _draw_territory():
 				c = players[pid].color
 			terr_layer.draw_circle(n["pos"], n["r"], Color(c.r, c.g, c.b, 0.06))
 			terr_layer.draw_arc(n["pos"], n["r"], 0.0, TAU, 64, Color(c.r, c.g, c.b, 0.35), 1.5)
+
+# ---------- 군대개미 ----------
+
+func near_marching_building(pos, pid, r):
+	for b in buildings:
+		if b.pid == pid and b.built and not b.camped() and b.position.distance_to(pos) <= r + b.radius:
+			return true
+	return false
+
+# 행군 중인 건물이 지금 자리에 야영할 수 있는가
+func can_camp(b):
+	if not terrain.can_build(b.position, b.radius):
+		return false
+	for o in buildings:
+		if o != b and o.camped() and o.position.distance_to(b.position) < b.radius + o.radius + 8.0:
+			return false
+	for n in res_nodes:
+		if n.position.distance_to(b.position) < b.radius + n.radius + 20.0:
+			return false
+	return true
+
+# 약탈: 군대개미가 적 일꾼·건물(약탈 본능이면 전투 유닛도)을 처치하면 자원을 얻는다
+func on_kill(attacker, victim):
+	if attacker == null or not is_instance_valid(attacker) or attacker.get("pid") == null:
+		return
+	var ap = attacker.pid
+	# 포식 대군: 무엇이든 처치하면 회복(범위 피해로 처치해도)
+	if attacker.get("d") != null and attacker.d.get("feast", false) and not attacker.dead:
+		attacker.hp = min(attacker.max_hp, attacker.hp + attacker.max_hp * Data.FEAST_HEAL)
+	if ap == Data.NEUTRAL_ID or victim.pid == Data.NEUTRAL_ID or ap == victim.pid:
+		return
+	var p = players[ap]
+	if not Data.FACTIONS.get(p.faction, {}).get("loot", false):
+		return
+	var rate = Data.LOOT_RATE_INSTINCT if p.has("loot_instinct") else Data.LOOT_RATE
+	var food = 0.0
+	var mat = 0.0
+	if victim is BuildingScript:
+		var cost = Data.BUILDINGS[victim.kind]["mat"]
+		food = cost * rate
+		mat = cost * rate
+	elif victim.is_worker:
+		food = players[victim.pid].unit_food("worker") * rate
+	elif p.has("loot_instinct") and victim.can_fight:
+		food = victim.d["food"] / float(victim.d["batch"]) * Data.LOOT_COMBAT_RATE
+	if food > 0.0 or mat > 0.0:
+		p.food += food
+		p.mat += mat
+		p.looted += food + mat
+
+func pack_colony(pid, do_pack):
+	for b in buildings:
+		if b.pid == pid and b.built:
+			if do_pack:
+				b.pack()
+			elif b.mode == "march" and not b.unpack() and pid == human_id:
+				msg("%s: 여기에는 야영할 수 없습니다" % b.d["name"])
+	sel_version += 1
+
+# 행군 명령. 주 둥지를 움직이면 행군 중인 다른 건물도 대형을 유지하며 따라온다
+func order_march(b, pos):
+	if b.kind == "nest" and b.is_main:
+		for o in buildings:
+			if o.pid == b.pid and o != b and (o.mode == "march" or o.mode == "packing"):
+				o.march_to(pos + (o.position - b.position))
+	return b.march_to(pos)
+
+func _mobile_cmds(b):
+	var out = []
+	if not b.is_mobile():
+		return out
+	match b.mode:
+		"camp":
+			out.append({"text": "행군 준비\n%d초" % int(b.pack_time()), "tip": "건물이 이동할 수 있게 된다. 행군 중에는 생산이 느려지고 일꾼 생산·연구·자원 반납이 멈춘다",
+				"enabled": true, "call": func(): b.pack(); sel_version += 1})
+		"packing":
+			out.append({"text": "행군 준비 중\n%d초" % int(ceil(b.mode_t)), "tip": "", "enabled": false, "call": func(): pass})
+		"march":
+			out.append({"text": "야영\n%d초" % int(b.unpack_time()), "tip": "지금 자리에 자리를 잡는다. 오른쪽 클릭으로 이동",
+				"enabled": true, "call": func():
+					if not b.unpack():
+						msg("여기에는 야영할 수 없습니다")
+					sel_version += 1})
+		"unpacking":
+			out.append({"text": "야영 준비 중\n%d초" % int(ceil(b.mode_t)), "tip": "", "enabled": false, "call": func(): pass})
+	if b.kind == "nest" and b.is_main:
+		out.append({"text": "군체 전체 행군", "tip": "모든 건물이 행군을 준비한다. 주 둥지를 움직이면 다른 건물도 따라온다",
+			"enabled": true, "call": pack_colony.bind(b.pid, true)})
+		out.append({"text": "군체 전체 야영", "tip": "행군 중인 모든 건물이 지금 자리에 야영한다",
+			"enabled": true, "call": pack_colony.bind(b.pid, false)})
+	return out
 
 # ---------- 함정턱개미 ----------
 
@@ -751,7 +872,11 @@ func start_build(pid, kind, pos, builders):
 	if not p.can_afford(0, d["mat"]):
 		_say(pid, "재료가 부족합니다")
 		return null
+	if d.get("pop", 0.0) > 0.0 and p.pop_used + d["pop"] > p.pop_cap + 0.001:
+		_say(pid, "인구가 부족합니다 (건물 1동이 인구 %d 차지)" % int(d["pop"]))
+		return null
 	p.pay(0, d["mat"])
+	p.pop_used += d.get("pop", 0.0)
 	var b = spawn_building(pid, kind, pos, false, false)
 	for u in builders:
 		if u.is_worker:
@@ -1014,7 +1139,11 @@ func get_commands():
 					label = "▶ " + label
 				cmds.append({"text": label, "tip": "", "enabled": true, "call": _set_lab_tab.bind(tab[0])})
 			cmds.append({"text": "마지막 예약 취소", "tip": "전액 환불", "enabled": b.queue.size() > 0, "call": cancel_last.bind(b)})
-			cmds.append({"text": "", "tip": "", "enabled": false, "blank": true, "call": func(): pass})
+			var mc = _mobile_cmds(b)
+			if mc.size() > 0:
+				cmds.append(mc[0])
+			else:
+				cmds.append({"text": "", "tip": "", "enabled": false, "blank": true, "call": func(): pass})
 			var shown = {}
 			for id in Data.RESEARCH:
 				var r = Data.RESEARCH[id]
@@ -1035,6 +1164,7 @@ func get_commands():
 			return cmds
 		if b.queue.size() > 0:
 			cmds.append({"text": "마지막 예약 취소", "tip": "전액 환불", "enabled": true, "call": cancel_last.bind(b)})
+		cmds.append_array(_mobile_cmds(b))
 		return cmds
 	var has_worker = false
 	var has_root = false
@@ -1239,6 +1369,9 @@ func _finish_drag(wp):
 func _right_click(wp):
 	var e = _entity_at(wp)
 	var b = sel_building()
+	if b != null and b.pid == human_id and (b.mode == "march" or b.mode == "packing"):
+		order_march(b, wp)
+		return
 	if b != null and b.pid == human_id:
 		b.rally_pos = wp
 		b.rally_node = null
@@ -1350,7 +1483,7 @@ func _physics_process(delta):
 		has_nest.append(false)
 	for b in buildings:
 		var p = players[b.pid]
-		p.pop_used += b.reserved_pop
+		p.pop_used += b.reserved_pop + b.pop_cost
 		if b.kind == "nest" and b.built:
 			has_nest[b.pid] = true
 			if b.is_main:
@@ -1486,6 +1619,6 @@ func _draw_overlay():
 			c = Color(1.0, 0.3, 0.3, 0.4)
 		overlay.draw_circle(mp, Data.BUILDINGS[build_mode]["radius"], c)
 	var b = sel_building()
-	if b != null and b.pid == human_id and b.built and b.d["produces"].size() > 0:
+	if b != null and b.pid == human_id and b.built and b.camped() and b.d["produces"].size() > 0:
 		overlay.draw_line(b.position, b.rally_pos, Color(1, 1, 1, 0.3), 1.0)
 		overlay.draw_circle(b.rally_pos, 4.0, Color(1, 1, 1, 0.6))
