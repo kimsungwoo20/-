@@ -47,6 +47,11 @@ func _ready():
 		slot_peer.clear()
 		_refresh())
 
+func _back():
+	if net != null and net.is_online():
+		net.leave()
+	get_tree().change_scene_to_file("res://scenes/title.tscn")
+
 func _label(text, size = 16):
 	var l = Label.new()
 	l.text = text
@@ -75,11 +80,20 @@ func _build():
 	var box = VBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
 	center.add_child(box)
-	box.add_child(_label("개미 RTS", 30))
-	box.add_child(_label("자리를 정하고 시작하세요. 친구와 하려면 방을 만들어 방 코드를 알려 주세요.", 14))
+	var online_mode = ConfigScript.lobby_mode == "online"
+	var head = HBoxContainer.new()
+	head.add_theme_constant_override("separation", 14)
+	box.add_child(head)
+	var back = Button.new()
+	back.text = "← 처음 화면"
+	back.pressed.connect(_back)
+	head.add_child(back)
+	head.add_child(_label("온라인 대전" if online_mode else "혼자 하기", 30))
+	box.add_child(_label("방을 만들어 방 코드를 친구에게 알려 주거나, 받은 방 코드로 참가하세요." if online_mode else "자리마다 인공지능을 넣고 진영·팀·난이도를 고른 뒤 시작하세요.", 14))
 
 	var online = HBoxContainer.new()
 	online.add_theme_constant_override("separation", 8)
+	online.visible = online_mode
 	box.add_child(online)
 	online.add_child(_label("이름"))
 	name_edit = LineEdit.new()
@@ -99,6 +113,7 @@ func _build():
 	join_btn.pressed.connect(_join)
 	online.add_child(join_btn)
 	net_status = _label("", 14)
+	net_status.visible = online_mode
 	box.add_child(net_status)
 
 	var top = HBoxContainer.new()
@@ -144,7 +159,9 @@ func _build():
 		names.append(nl)
 		swatch.add_child(nl)
 		grid.add_child(swatch)
-		var type = _option(["나"] if i == 0 else ["인공지능", "비움", "사람(참가자)"], 0 if i <= 1 else 1)
+		# 혼자 하기에서는 참가자 자리를 고를 수 없다(오지 않을 사람을 기다리게 되므로)
+		var kinds = ["인공지능", "비움", "사람(참가자)"] if online_mode else ["인공지능", "비움"]
+		var type = _option(["나"] if i == 0 else kinds, 0 if i <= 1 else 1)
 		type.disabled = (i == 0)
 		grid.add_child(type)
 		var fac = _option(fnames, 1 if i == 0 else 2 if i == 1 else 0)

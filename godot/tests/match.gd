@@ -237,6 +237,7 @@ func _initialize():
 	ConfigScript.setup = null
 
 	await ai_checks()
+	await title_checks()
 
 	print("RESULT fails=%d" % fails)
 	quit(1 if fails > 0 else 0)
@@ -387,3 +388,34 @@ func ai_checks():
 	await wait(0.1)
 	check(raft.state == raft.MOVE, "뗏목단이 목표로 출발한다")
 	await end_game(g)
+
+
+# 메인 화면
+func title_checks():
+	ConfigScript.setup = null
+	var t = load("res://scripts/title.gd").new()
+	root.add_child(t)
+	await wait(0.2)
+	var names = []
+	for b in t.find_children("*", "Button", true, false):
+		names.append(b.text)
+	check(names.has("혼자 하기") and names.has("온라인 대전") and names.has("진영 소개") and names.has("조작법") and names.has("설정"), "메인 화면: 혼자 하기·온라인 대전·진영 소개·조작법·설정")
+	t.open_window("factions")
+	check(t.windows["factions"].visible and not t.windows["help"].visible, "진영 소개 창이 열린다")
+	var ok = true
+	for f in Data.FACTION_IDS:
+		t.show_faction(f)
+		await wait(0.05)
+		if t.preview.faction != f or t.info_box.get_child_count() < 6:
+			ok = false
+	check(ok, "다섯 진영 모두 소개(그림·콘셉트·강점·약점·상성·대표 유닛)")
+	t.show_faction("trap")
+	await wait(0.05)
+	var texts = t.info_box.get_children().filter(func(c): return not c.is_queued_for_deletion()).map(func(c): return c.text)
+	check(texts.any(func(x): return x.contains("군대개미 에 강하고") and x.contains("불개미 에 약하다")), "상성 문구가 기획서 순환과 같다(함정턱개미: 군대개미에 강하고 불개미에 약하다)")
+	t.open_window("help")
+	check(t.windows["help"].visible and not t.windows["factions"].visible, "조작법 창")
+	t.open_window("settings")
+	check(t.windows["settings"].visible, "설정 창")
+	t.queue_free()
+	await wait(0.1)
