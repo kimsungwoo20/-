@@ -2,7 +2,23 @@ extends RefCounted
 # 공통 규칙 수치. docs/system-design.md 의 [권장] 초기값을 그대로 옮긴 것이다.
 # 진영별로 다른 값은 FACTIONS 와, 유닛·연구의 "faction" 항목에 있다.
 
-const MAP_SIZE = Vector2(3200, 2000)
+# 지도 크기는 판마다 정한다(방 화면의 "지도 크기"). 게임이 시작될 때 MAP_SIZE 를 바꾼다
+static var MAP_SIZE = Vector2(3200, 2000)
+const MAP_SIZES = {
+	"small": {"name": "작게", "size": Vector2(2600, 1600)},
+	"medium": {"name": "보통", "size": Vector2(3200, 2000)},
+	"large": {"name": "크게", "size": Vector2(4800, 3000)},
+	"huge": {"name": "아주 크게", "size": Vector2(6400, 4000)},
+}
+const MAP_SIZE_IDS = ["auto", "small", "medium", "large", "huge"]
+
+# 자동: 2~3인은 보통, 4~5인은 크게. 작은 지도는 4~5인에게 너무 좁아서 보통으로 올린다
+static func map_key(choice, n):
+	if choice == "small" and n >= 4:
+		return "medium"
+	if MAP_SIZES.has(choice):
+		return choice
+	return "medium" if n <= 3 else "large"
 const POP_MAX = 200.0
 const POP_MAX_BIG = 150.0              # 4~5인 판의 최대 인구(화면 안 유닛 수 관리)
 const MAX_PLAYERS = 5

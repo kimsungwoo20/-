@@ -14,6 +14,7 @@ const T_PEOPLE = 2
 
 var rows = []          # 자리마다 {type, faction, team, diff} 옵션 버튼
 var mode_btn
+var map_btn
 var balance_chk
 var info
 var start_btn
@@ -111,6 +112,14 @@ func _build():
 	balance_chk.tooltip_text = "팀전에서 인원이 적은 팀의 채집 속도를 모자란 인원 1명당 +25%"
 	balance_chk.toggled.connect(func(_b): _refresh())
 	top.add_child(balance_chk)
+	top.add_child(_label("   지도 크기"))
+	var mnames = ["자동"]
+	for k in Data.MAP_SIZE_IDS.slice(1):
+		var sz = Data.MAP_SIZES[k]["size"]
+		mnames.append("%s (%d×%d)" % [Data.MAP_SIZES[k]["name"], int(sz.x), int(sz.y)])
+	map_btn = _option(mnames, 0)
+	map_btn.custom_minimum_size = Vector2(190, 36)
+	top.add_child(map_btn)
 
 	var grid = GridContainer.new()
 	grid.columns = 5
@@ -231,6 +240,7 @@ func _on_lobby_changed():
 		var st = net.lobby
 		mode_btn.select(st["mode"])
 		balance_chk.button_pressed = st["balance"]
+		map_btn.select(st.get("map", 0))
 		for i in rows.size():
 			var r = st["rows"][i]
 			rows[i]["type"].select(r["type"])
@@ -250,7 +260,7 @@ func _lobby_state():
 			nm = net.peers[slot_peer[i]]["name"]
 		rs.append({"type": rows[i]["type"].selected, "faction": rows[i]["faction"].selected,
 			"team": rows[i]["team"].selected, "diff": rows[i]["diff"].selected, "name": nm})
-	return {"mode": mode_btn.selected, "balance": balance_chk.button_pressed, "rows": rs}
+	return {"mode": mode_btn.selected, "balance": balance_chk.button_pressed, "map": map_btn.selected, "rows": rs}
 
 func _refresh():
 	var client = net != null and net.is_client()
@@ -268,6 +278,7 @@ func _refresh():
 		join_btn.disabled = net.is_online()
 	mode_btn.disabled = client
 	balance_chk.disabled = client
+	map_btn.disabled = client
 	var team_mode = mode_btn.selected == 1
 	balance_chk.visible = team_mode
 	var n = 0
@@ -293,7 +304,12 @@ func _refresh():
 	start_btn.disabled = not ok or client or waiting > 0
 	start_btn.visible = not client
 	var pop = int(Data.POP_MAX if n <= 3 else Data.POP_MAX_BIG)
-	var t = "참가 %d명 · %d인용 지도 · 최대 인구 %d" % [n, n, pop]
+	var choice = Data.MAP_SIZE_IDS[map_btn.selected]
+	var key = Data.map_key(choice, n)
+	var sz = Data.MAP_SIZES[key]["size"]
+	var t = "참가 %d명 · %d인용 지도 %s(%d×%d) · 최대 인구 %d" % [n, n, Data.MAP_SIZES[key]["name"], int(sz.x), int(sz.y), pop]
+	if choice == "small" and key != "small":
+		t += "\n작은 지도는 4~5인에게 좁아서 보통 크기로 합니다"
 	if n < 2:
 		t += "\n인공지능이나 참가자를 1명 이상 넣어야 합니다"
 	elif not ok:
@@ -331,4 +347,5 @@ func make_setup():
 			sl["peer"] = slot_peer[i]
 			sl["name"] = net.peers[slot_peer[i]]["name"]
 		slots.append(sl)
-	return {"mode": "team" if team_mode else "ffa", "slots": slots, "balance": team_mode and balance_chk.button_pressed}
+	return {"mode": "team" if team_mode else "ffa", "slots": slots, "balance": team_mode and balance_chk.button_pressed,
+		"map": Data.MAP_SIZE_IDS[map_btn.selected]}

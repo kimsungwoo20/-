@@ -44,7 +44,36 @@ func _initialize():
 		print("RESULT fails=%d" % fails)
 		quit(1 if fails > 0 else 0)
 		return
-	# 지도 검증(2~5인)
+	# 지도 검증(크기 4종 × 2~5인)
+	for key in ["small", "medium", "large", "huge"]:
+		for n in [2, 3, 4, 5]:
+			if Data.map_key(key, n) != key:
+				continue
+			Data.MAP_SIZE = Data.MAP_SIZES[key]["size"]
+			var L = MapGen.make(n, key)
+			var T = TerrainScript.new()
+			T.setup(L["terrain"])
+			var s0 = L["starts"][0]
+			var bad = 0
+			for e in L["nodes"]:
+				if T.kind_at(e[1]) != 0 or not T.reachable(s0, e[1], "ground"):
+					bad += 1
+			for e in L["expansions"] + L["starts"]:
+				if not T.can_build(e, 40) or not T.reachable(s0, e, "ground"):
+					bad += 1
+			for c in L["camps"]:
+				if not T.passable(c[0], "ground") or not T.reachable(s0, c[0], "ground"):
+					bad += 1
+			var md = 1e9
+			for i in n:
+				for j in range(i + 1, n):
+					md = min(md, L["starts"][i].distance_to(L["starts"][j]))
+			check(bad == 0 and md > 800.0, "%s %d인: 자원·확장·무리가 모두 쓸 수 있고 기지 사이 %d 이상" % [Data.MAP_SIZES[key]["name"], n, int(md)])
+	check(Data.map_key("small", 5) == "medium" and Data.map_key("auto", 2) == "medium" and Data.map_key("auto", 4) == "large", "작게는 4~5인에서 보통으로, 자동은 2~3인 보통·4~5인 크게")
+	var big2 = MapGen.make(2, "large")
+	Data.MAP_SIZE = Data.MAP_SIZES["medium"]["size"]
+	check(big2["expansions"].size() > MapGen.make(3, "medium")["expansions"].size() / 3 * 2, "큰 지도에는 기지마다 확장 지점이 더 있다")
+	Data.MAP_SIZE = Data.MAP_SIZES["medium"]["size"]
 	for n in [2, 3, 4, 5]:
 		var L = MapGen.make(n)
 		var T = TerrainScript.new()
@@ -79,6 +108,14 @@ func _initialize():
 				fair = false
 		check(fair, "%d인 지도: 모든 기지 옆에 씨앗·낙엽·진딧물" % n)
 	check(MapGen.make(2)["nodes"].size() == 21, "2인 지도는 기존 대칭 지도 그대로")
+
+	# 판마다 지도 크기가 정해진다
+	var gm = await start_game({"mode": "ffa", "slots": slots(["fire", "leaf"]), "balance": false, "map": "huge"})
+	check(Data.MAP_SIZE == Vector2(6400, 4000) and gm.terrain.w == 200 and gm.fog.w == 200, "아주 크게: 지도·지형·안개가 6400×4000")
+	await end_game(gm)
+	gm = await start_game({"mode": "ffa", "slots": slots(["fire", "leaf"]), "balance": false})
+	check(Data.MAP_SIZE == Vector2(3200, 2000), "다음 판은 다시 자동 크기(2인 보통)")
+	await end_game(gm)
 
 	# 5인 개인전
 	var g = await start_game({"mode": "ffa", "slots": slots(["fire", "leaf", "weaver", "trap", "army"]), "balance": false})

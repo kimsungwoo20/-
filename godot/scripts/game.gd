@@ -59,6 +59,8 @@ var match_mode = "ffa"
 var n_players = 2
 var pop_max = 200.0
 var layout = {}
+var map_choice = "auto"
+var map_key = "medium"
 # ---- 온라인 대전 ----
 var net_role = "offline"   # offline / host / client
 var ents = {}              # 고유 번호 -> 유닛·건물·자원 지점
@@ -92,7 +94,9 @@ func _ready():
 		tree_exiting.connect(func(): if net.game == self: net.game = null)
 		net.left.connect(_on_net_left)
 	_setup_players()
-	layout = MapGen.make(n_players)
+	map_key = Data.map_key(map_choice, n_players)
+	Data.MAP_SIZE = Data.MAP_SIZES[map_key]["size"]
+	layout = MapGen.make(n_players, map_key)
 	terrain = TerrainScript.new()
 	terrain.setup(layout["terrain"])
 	world = Node2D.new()
@@ -145,6 +149,7 @@ func _match_setup():
 	var slots = [{"type": "human", "faction": "fire", "team": 0, "diff": "normal"},
 		{"type": "ai", "faction": "leaf", "team": 1, "diff": "normal"}]
 	var mode = "ffa"
+	var map_arg = "auto"
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--p0="):
 			slots[0]["faction"] = a.substr(5)
@@ -165,6 +170,8 @@ func _match_setup():
 			var ds = a.substr(8).split(",")
 			for i in min(ds.size(), slots.size()):
 				slots[i]["diff"] = ds[i]
+		elif a.begins_with("--map="):
+			map_arg = a.substr(6)
 	if OS.has_feature("web"):
 		var q = str(JavaScriptBridge.eval("window.location.search", true))
 		for part in q.trim_prefix("?").split("&"):
@@ -173,11 +180,14 @@ func _match_setup():
 				slots[0]["faction"] = kv[1]
 			elif kv.size() == 2 and kv[0] == "ai":
 				slots[1]["faction"] = kv[1]
-	return {"mode": mode, "slots": slots, "balance": false}
+			elif kv.size() == 2 and kv[0] == "map":
+				map_arg = kv[1]
+	return {"mode": mode, "slots": slots, "balance": false, "map": map_arg}
 
 func _setup_players():
 	var cfg = _match_setup()
 	human_id = cfg.get("me", 0)
+	map_choice = cfg.get("map", "auto")
 	var slots = cfg["slots"]
 	match_mode = cfg["mode"]
 	n_players = slots.size()
@@ -245,7 +255,8 @@ func _mirror(p):
 func _setup_map():
 	var rng = RandomNumberGenerator.new()
 	rng.seed = 7
-	for i in 400:
+	# 바닥 장식은 지도 넓이에 비례
+	for i in int(400 * Data.MAP_SIZE.x * Data.MAP_SIZE.y / (3200.0 * 2000.0)):
 		decor.append([Vector2(rng.randf() * Data.MAP_SIZE.x, rng.randf() * Data.MAP_SIZE.y), rng.randf_range(2.0, 7.0), rng.randf_range(-0.05, 0.05)])
 	expansions = layout["expansions"].duplicate()
 	# 참가자 화면: 자원 지점·유닛·건물은 방장이 보내는 상태로 만든다
@@ -343,7 +354,7 @@ func _tick_map(delta):
 	drop_t += delta
 	if drop_t >= Data.CENTER_DROP_EVERY:
 		drop_t = 0.0
-		var pos = Vector2(1600 + drop_rng.randf_range(-160, 160), 1000 + drop_rng.randf_range(-320, 320))
+		var pos = Data.MAP_SIZE / 2.0 + Vector2(drop_rng.randf_range(-160, 160), drop_rng.randf_range(-320, 320))
 		spawn_corpse(pos, Data.CENTER_DROP_AMOUNT)
 		if not autotest:
 			msg("맵 중앙에 큰 사체가 떨어졌습니다")
