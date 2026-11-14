@@ -494,6 +494,7 @@ func terrain_checks(game):
 	check(not game.units.has(raft) and not game.units.has(riders[0]) and game.units.size() == n0 - 2, "뗏목단이 죽으면 타고 있던 유닛도 죽는다")
 	clear_units(game)
 
+	await building_block_checks(game)
 	await leaf_checks(game)
 
 func hit_once(game, attacker, victim):
@@ -1467,3 +1468,54 @@ func _initialize():
 
 	print("RESULT fails=%d" % fails)
 	quit(1 if fails > 0 else 0)
+
+
+# 건물 충돌: 지상 유닛은 건물을 돌아가고, 공중 유닛은 위로 지나간다
+func building_block_checks(game):
+	var T = game.terrain
+	clear_units(game)
+	var bpos = Vector2(1600, 1200)
+	var b = game.spawn_building(0, "combat", bpos, true, false)
+	check(not T.passable(bpos, "ground") and not T.passable(bpos, "raft") and T.passable(bpos, "air"), "건물 자리는 지상 유닛·뗏목이 지나갈 수 없고 공중은 지나간다")
+	var walker = game.spawn_unit(0, "stinger", bpos + Vector2(-150, 0))
+	var through = false
+	walker.cmd_move(bpos + Vector2(150, 0))
+	for i in 300:
+		await physics_frame
+		if walker.position.distance_to(bpos) < 18.0:
+			through = true
+	check(not through and walker.position.distance_to(bpos + Vector2(150, 0)) < 15.0, "지상 유닛은 건물을 돌아서 간다")
+	var flyer = game.spawn_unit(0, "scout", bpos + Vector2(-150, 30))
+	flyer.cmd_move(bpos + Vector2(150, 30))
+	await wait(3.0)
+	check(flyer.position.distance_to(bpos + Vector2(150, 30)) < 15.0, "공중 유닛은 건물 위를 지나간다")
+	# 건물이 서는 자리에 있던 유닛은 밀려난다
+	var stander = game.spawn_unit(0, "soldier", Vector2(1800, 1300))
+	var b2 = game.spawn_building(0, "defense", Vector2(1800, 1300), true, false)
+	await wait(0.7)
+	check(T.passable(stander.position, "ground"), "건물이 선 자리에 있던 유닛은 가까운 빈자리로 밀려난다")
+	# 공격·반납이 가장자리에서 닿는다
+	clear_units(game)
+	await wait(0.1)
+	var foe = game.spawn_unit(1, "stinger", bpos + Vector2(120, 80))
+	foe.max_hp = 9999.0
+	foe.hp = 9999.0
+	foe.cmd_attack(b)
+	var h0 = b.hp
+	await wait(4.0)
+	check(b.hp < h0, "근접 유닛이 건물 가장자리에서 공격할 수 있다")
+	foe.dead = true
+	game.remove_unit(foe)
+	var nest = game.main_nest(0)
+	var wk = game.spawn_unit(0, "worker", nest.position + Vector2(140, 0))
+	wk.carry = 10.0
+	wk.carry_res = "mat"
+	wk.state = wk.RETURN
+	var m0 = game.players[0].mat
+	await wait(3.0)
+	check(wk.carry == 0.0 and game.players[0].mat >= m0 + 10.0, "일꾼이 둥지 가장자리에서 자원을 내려놓는다")
+	b.take_damage(99999.0, null)
+	b2.take_damage(99999.0, null)
+	await wait(0.1)
+	check(T.passable(bpos, "ground"), "건물이 무너지면 그 자리가 다시 열린다")
+	clear_units(game)

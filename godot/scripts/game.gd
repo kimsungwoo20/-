@@ -382,6 +382,7 @@ func spawn_building(pid, kind, pos, finished, main, nid = 0):
 	var b = BuildingScript.new()
 	b.setup(self, pid, kind, pos, finished, main)
 	_new_nid(b, nid)
+	b.set_blocking(true)
 	b.z_index = 2
 	world.add_child(b)
 	buildings.append(b)
@@ -410,6 +411,7 @@ func remove_res_node(n):
 	n.queue_free()
 
 func remove_building(b):
+	b.set_blocking(false)
 	buildings.erase(b)
 	ents.erase(b.nid)
 	if selection.has(b):

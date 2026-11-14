@@ -13,6 +13,8 @@ var h = 0
 var cells = PackedByteArray()
 var nav = {}             # "ground" / "raft" -> AStarGrid2D
 var bridged = PackedInt32Array()   # 칸마다 그 위에 걸린 살아있는 다리 수
+var blocked = PackedInt32Array()   # 칸마다 그 위에 선 건물 수(지상 유닛·뗏목이 지나가지 못한다)
+const BUILDING_FOOTPRINT = 0.8     # 건물 그림 반경 중 실제로 막는 비율(유닛이 가장자리까지 다가갈 수 있게)
 
 func setup(features = null):
 	w = int(ceil(Data.MAP_SIZE.x / Data.FOG_CELL))
@@ -21,6 +23,8 @@ func setup(features = null):
 	cells.fill(GROUND)
 	bridged.resize(w * h)
 	bridged.fill(0)
+	blocked.resize(w * h)
+	blocked.fill(0)
 	if features == null:
 		# 기본: 2인 지도(왼쪽 절반을 적고 좌우 대칭)
 		for r in Data.TERRAIN:
@@ -74,13 +78,46 @@ func kind_at(pos):
 	return cells[c.y * w + c.x]
 
 func passable(pos, layer):
-	if _open_kind(kind_at(pos), layer):
+	var c = cell(pos)
+	return _cell_open(c.y * w + c.x, layer)
+
+# 한 칸을 지나갈 수 있는가: 지형(다리 포함)이 열려 있고 건물이 서 있지 않아야 한다
+func _cell_open(i, layer):
+	if layer == "air":
+		return true
+	if blocked[i] > 0:
+		return false
+	if _open_kind(cells[i], layer):
 		return true
 	# 다리 개미가 이어 놓은 물·절벽은 지상 유닛이 건널 수 있다
-	if layer == "ground":
+	return layer == "ground" and bridged[i] > 0
+
+func _refresh_cell(i):
+	var p = Vector2i(i % w, i / w)
+	for layer in nav:
+		nav[layer].set_point_solid(p, not _cell_open(i, layer))
+
+# 건물이 서거나(delta +1) 무너질 때(-1) 그 자리 칸을 막거나 연다
+func add_building(pos, radius, delta):
+	var r = radius * BUILDING_FOOTPRINT
+	var c0 = cell(pos - Vector2(r, r))
+	var c1 = cell(pos + Vector2(r, r))
+	var any = false
+	for y in range(c0.y, c1.y + 1):
+		for x in range(c0.x, c1.x + 1):
+			var center = Vector2((x + 0.5) * Data.FOG_CELL, (y + 0.5) * Data.FOG_CELL)
+			if center.distance_to(pos) > r:
+				continue
+			var i = y * w + x
+			blocked[i] = max(0, blocked[i] + delta)
+			_refresh_cell(i)
+			any = true
+	# 아주 작은 건물도 가운데 칸 하나는 막는다
+	if not any:
 		var c = cell(pos)
-		return bridged[c.y * w + c.x] > 0
-	return false
+		var i = c.y * w + c.x
+		blocked[i] = max(0, blocked[i] + delta)
+		_refresh_cell(i)
 
 func on_bridge(pos):
 	var c = cell(pos)
@@ -100,7 +137,7 @@ func add_bridge(pos, r, delta):
 				continue
 			var i = y * w + x
 			bridged[i] = max(0, bridged[i] + delta)
-			nav["ground"].set_point_solid(Vector2i(x, y), bridged[i] == 0)
+			_refresh_cell(i)
 
 func speed_mult(pos, layer):
 	if layer == "ground" and kind_at(pos) == TREE:
@@ -130,7 +167,7 @@ func nearest_open(pos, layer):
 					continue
 				if max(abs(x - c.x), abs(y - c.y)) != r:
 					continue
-				if _open_kind(cells[y * w + x], layer) or (layer == "ground" and bridged[y * w + x] > 0):
+				if _cell_open(y * w + x, layer):
 					var p = Vector2((x + 0.5) * Data.FOG_CELL, (y + 0.5) * Data.FOG_CELL)
 					var dd = p.distance_squared_to(pos)
 					if dd < bd:

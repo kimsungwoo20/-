@@ -39,6 +39,7 @@ var nav_t = 0.0
 var pop_cost = 0.0      # 군대개미: 건물이 차지하는 인구
 var nid = 0
 var net_gardeners = 0   # 참가자 화면: 방장이 알려 준 정원사 수
+var blocking = false    # 지금 지형 칸을 막고 있는가
 
 func setup(g, p, k, pos, finished, main):
 	game = g
@@ -101,6 +102,7 @@ func unpack():
 	mode_t = unpack_time()
 	march_dest = null
 	path = []
+	set_blocking(true)
 	return true
 
 func march_to(pos):
@@ -119,6 +121,7 @@ func _tick_mobile(delta):
 		mode_t -= delta
 		if mode_t <= 0.0:
 			mode = "march"
+			set_blocking(false)
 			game.on_building_done(self)
 	elif mode == "unpacking":
 		mode_t -= delta
@@ -231,6 +234,13 @@ func add_venom(cap, burn):
 		return
 	venom_stacks = min(venom_stacks + 1, cap)
 	venom_t = Data.VENOM_TIME
+
+# 자리를 잡은 건물은 지상 유닛이 지나가지 못한다(행군 중인 군대개미 건물은 막지 않는다)
+func set_blocking(on):
+	if on == blocking or game.net_role == "client":
+		return
+	blocking = on
+	game.terrain.add_building(position, radius, 1 if on else -1)
 
 func garden_count():
 	return net_gardeners if game.net_role == "client" else gardeners.size()

@@ -1,6 +1,8 @@
 extends Node2D
 const Data = preload("res://scripts/data.gd")
 const Art = preload("res://scripts/art.gd")
+# 건물 가장자리 여유: 건물은 32 칸 단위로 길을 막으므로 반 칸만큼 더 멀리서도 닿은 것으로 본다
+const PAD = 16.0
 
 enum {IDLE, MOVE, AMOVE, ATTACK, GATHER, RETURN, BUILD, BOARD, GARDEN}
 
@@ -321,7 +323,7 @@ func _do_garden(delta):
 		garden_target = null
 		state = IDLE
 		return
-	if _go(garden_target.position, delta, garden_target.radius + radius + 6.0):
+	if _go(garden_target.position, delta, garden_target.radius + radius + 6.0 + PAD):
 		var n = garden_target
 		garden_target = null
 		state = IDLE
@@ -483,6 +485,8 @@ func _do_attack(delta):
 			state = IDLE
 		return
 	var reach = atk_reach(target) + radius + target.radius
+	if target.get("built") != null and not air:
+		reach += PAD      # 건물은 칸 단위로 막히므로 가장자리에서 닿을 수 있게 여유를 둔다
 	var dist = position.distance_to(target.position)
 	# 사슬 견인병: 닿지 않는 적 유닛을 자기 앞으로 끌어온다(건물·거점화·공중 유닛 제외)
 	if d.get("pull", false) and pull_cd <= 0.0 and dist > reach and dist <= Data.PULL_RANGE and target.get("built") == null and target.get("is_neutral") != null and not target.rooted and not target.air:
@@ -605,7 +609,7 @@ func _do_return(delta):
 	if nest == null:
 		state = IDLE
 		return
-	var reach = nest.radius + radius + 4.0
+	var reach = nest.radius + radius + 4.0 + (PAD if nest.get("built") != null else 0.0)
 	if _go(nest.position, delta, reach):
 		game.deposit(pid, carry_res, carry)
 		carry = 0.0
@@ -624,7 +628,7 @@ func _do_build(delta):
 		else:
 			state = IDLE
 		return
-	var reach = build_target.radius + radius + 6.0
+	var reach = build_target.radius + radius + 6.0 + PAD
 	if _go(build_target.position, delta, reach):
 		build_target.add_build(delta)
 
