@@ -50,11 +50,12 @@ func is_explored_at(pos):
 
 func recompute(game, pid):
 	vis.fill(0)
+	# 같은 팀의 시야를 함께 본다
 	for u in game.units:
-		if u.pid == pid and not u.dead:
+		if not u.dead and not u.carried and not u.is_neutral and not game.is_enemy(u.pid, pid):
 			reveal(u.position, u.sight())
 	for b in game.buildings:
-		if b.pid == pid and not b.dead:
+		if not b.dead and not game.is_enemy(b.pid, pid):
 			reveal(b.position, b.sight())
 	var data = PackedByteArray()
 	data.resize(w * h * 2)

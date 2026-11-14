@@ -10,6 +10,8 @@ const AIScript = preload("res://scripts/ai.gd")
 const HudScript = preload("res://scripts/hud.gd")
 const FogScript = preload("res://scripts/fog.gd")
 const TerrainScript = preload("res://scripts/terrain.gd")
+const ConfigScript = preload("res://scripts/config.gd")
+const MapGen = preload("res://scripts/mapgen.gd")
 
 const CELL = 64.0
 const HOTKEYS = [KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B]
@@ -52,6 +54,10 @@ var terr_t = 0.0
 var curtains = []        # 펼쳐진 비단 장막: [위치, pid, 주인 영역 안인가]
 var terr_layer
 var has_depots = {}      # pid -> 운반병이 있는가
+var match_mode = "ffa"
+var n_players = 2
+var pop_max = 200.0
+var layout = {}
 
 var build_mode = ""
 var lab_tab = "body"
@@ -63,8 +69,10 @@ var pan_drag = false
 func _ready():
 	autotest = OS.get_cmdline_user_args().has("--autotest")
 	sandbox = OS.get_cmdline_user_args().has("--sandbox")
+	_setup_players()
+	layout = MapGen.make(n_players)
 	terrain = TerrainScript.new()
-	terrain.setup()
+	terrain.setup(layout["terrain"])
 	world = Node2D.new()
 	add_child(world)
 	terr_layer = Node2D.new()
@@ -83,7 +91,6 @@ func _ready():
 	add_child(camera)
 	camera.make_current()
 	camera.zoom = Vector2(1.25, 1.25)
-	_setup_players()
 	_setup_map()
 	hud = HudScript.new()
 	add_child(hud)
@@ -106,48 +113,93 @@ func _ready():
 
 # ---------- 초기 배치 ----------
 
-func _pick_factions():
-	var f = ["fire", "leaf"]
-	var args = OS.get_cmdline_user_args()
-	for a in args:
+# 판 설정: 방 화면(Config.setup) > 실행 인자 > 웹 주소 > 기본값(나 불개미, 상대 잎꾼개미)
+# 실행 인자: --p0=leaf --p1=fire / --players=fire,leaf,trap --teams=0,0,1 --diffs=hard,easy,normal
+func _match_setup():
+	if ConfigScript.setup != null:
+		return ConfigScript.setup
+	var slots = [{"type": "human", "faction": "fire", "team": 0, "diff": "normal"},
+		{"type": "ai", "faction": "leaf", "team": 1, "diff": "normal"}]
+	var mode = "ffa"
+	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--p0="):
-			f[0] = a.substr(5)
+			slots[0]["faction"] = a.substr(5)
 		elif a.begins_with("--p1="):
-			f[1] = a.substr(5)
+			slots[1]["faction"] = a.substr(5)
+		elif a.begins_with("--players="):
+			var fs = a.substr(10).split(",")
+			slots = []
+			for i in fs.size():
+				slots.append({"type": "human" if i == 0 else "ai", "faction": fs[i], "team": i, "diff": "normal"})
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--teams="):
+			var ts = a.substr(8).split(",")
+			mode = "team"
+			for i in min(ts.size(), slots.size()):
+				slots[i]["team"] = int(ts[i])
+		elif a.begins_with("--diffs="):
+			var ds = a.substr(8).split(",")
+			for i in min(ds.size(), slots.size()):
+				slots[i]["diff"] = ds[i]
 	if OS.has_feature("web"):
 		var q = str(JavaScriptBridge.eval("window.location.search", true))
 		for part in q.trim_prefix("?").split("&"):
 			var kv = part.split("=")
 			if kv.size() == 2 and kv[0] == "me":
-				f[human_id] = kv[1]
+				slots[0]["faction"] = kv[1]
 			elif kv.size() == 2 and kv[0] == "ai":
-				f[1 - human_id] = kv[1]
-	for i in 2:
-		if not Data.FACTIONS.has(f[i]):
-			f[i] = "fire"
-	return f
+				slots[1]["faction"] = kv[1]
+	return {"mode": mode, "slots": slots, "balance": false}
 
 func _setup_players():
-	var defs = [["플레이어", Color(0.9, 0.25, 0.15)], ["인공지능", Color(0.25, 0.5, 0.95)]]
-	var fs = _pick_factions()
-	for i in defs.size():
+	var cfg = _match_setup()
+	var slots = cfg["slots"]
+	match_mode = cfg["mode"]
+	n_players = slots.size()
+	pop_max = Data.POP_MAX if n_players <= 3 else Data.POP_MAX_BIG
+	for i in Data.MAX_PLAYERS:
 		var p = PlayerScript.new()
 		p.id = i
-		p.label = defs[i][0]
-		p.color = defs[i][1]
-		p.faction = fs[i]
-		p.is_ai = (i != human_id) or autotest
+		p.color = Data.PLAYER_COLORS[i]
+		if i < n_players:
+			var sl = slots[i]
+			p.faction = sl["faction"] if Data.FACTIONS.has(sl["faction"]) else Data.FACTION_IDS[randi() % Data.FACTION_IDS.size()]
+			p.team = sl["team"] if match_mode == "team" else i
+			p.diff = sl.get("diff", "normal") if Data.DIFFS.has(sl.get("diff", "normal")) else "normal"
+			p.is_ai = sl["type"] != "human" or autotest
+			p.label = "나" if not p.is_ai else "인공지능 %d" % i
+			p.gather_mult = Data.DIFFS[p.diff]["gather"] if p.is_ai else 1.0
+		else:
+			p.active = false
+			p.alive = false
+			p.team = 100 + i
 		players.append(p)
-		if p.is_ai and not sandbox:
+	# 인원 불균형 보정(팀전): 인원이 적은 팀의 채집 속도를 올린다
+	if match_mode == "team" and cfg.get("balance", false):
+		var sizes = {}
+		for p in players:
+			if p.active:
+				sizes[p.team] = sizes.get(p.team, 0) + 1
+		var biggest = sizes.values().max()
+		for p in players:
+			if p.active:
+				p.gather_mult *= 1.0 + Data.BALANCE_GATHER * (biggest - sizes[p.team])
+	for p in players:
+		if p.active and p.is_ai and not sandbox:
 			var ai = AIScript.new()
-			ai.setup(self, i)
+			ai.setup(self, p.id)
 			ais.append(ai)
 	var np = PlayerScript.new()
 	np.id = Data.NEUTRAL_ID
 	np.label = "중립"
 	np.color = Color(0.55, 0.6, 0.35)
 	np.neutral = true
+	np.team = 99
 	players.append(np)
+
+# 서로 적인가: 다른 팀이면 적. 중립 생물은 모두와 적
+func is_enemy(a, b):
+	return a != b and players[a].team != players[b].team
 
 func _mirror(p):
 	return Vector2(Data.MAP_SIZE.x - p.x, p.y)
@@ -157,34 +209,15 @@ func _setup_map():
 	rng.seed = 7
 	for i in 400:
 		decor.append([Vector2(rng.randf() * Data.MAP_SIZE.x, rng.randf() * Data.MAP_SIZE.y), rng.randf_range(2.0, 7.0), rng.randf_range(-0.05, 0.05)])
-	var start = Vector2(420, 1000)
-	var half = [
-		["seed", Vector2(600, 880)], ["litter", Vector2(600, 1130)], ["aphid", Vector2(300, 760)],
-		["aphid", Vector2(930, 330)], ["plant", Vector2(770, 290)],
-		["aphid", Vector2(930, 1670)], ["plant", Vector2(770, 1710)],
-		["plant", Vector2(1250, 1000)],
-	]
-	for e in half:
+	for e in layout["nodes"]:
 		_add_node(e[0], e[1])
-		_add_node(e[0], _mirror(e[1]))
-	_add_node("deadwood", Vector2(1600, 1000))
-	_add_node("plant", Vector2(1600, 620))
-	_add_node("plant", Vector2(1600, 1380))
-	_add_node("aphid", Vector2(1600, 250))
-	_add_node("aphid", Vector2(1600, 1750))
-	for e in [Vector2(840, 420), Vector2(840, 1580), Vector2(1600, 400), Vector2(1600, 1600)]:
-		expansions.append(e)
-		if e.x < 1500:
-			expansions.append(_mirror(e))
-	# 중립 무리: 기지 근처 유충(소형), 측면 거미(중형), 중앙 고목을 지키는 사마귀(대형)
-	for c in [[Vector2(640, 600), ["grub", "grub"]], [Vector2(640, 1400), ["grub", "grub"]],
-			[Vector2(1200, 640), ["spider"]], [Vector2(1200, 1360), ["spider"]]]:
+	expansions = layout["expansions"].duplicate()
+	# 중립 무리: 기지 근처 유충(소형), 기지 사이 거미(중형), 중앙 고목을 지키는 사마귀(대형)
+	for c in layout["camps"]:
 		_add_camp(c[0], c[1])
-		_add_camp(_mirror(c[0]), c[1])
-	_add_camp(Vector2(1600, 880), ["mantis"])
 	drop_rng.seed = 11
-	var starts = [start, _mirror(start)]
-	for i in 2:
+	var starts = layout["starts"]
+	for i in n_players:
 		var nest = spawn_building(i, "nest", starts[i], true, true)
 		nest.rally_node = nearest_node(nest.position, "food", null, i)
 		for k in Data.START_WORKERS:
@@ -399,23 +432,26 @@ func tyrant_near(pos, pid):
 			return true
 	return false
 
+# 감지는 팀이 함께 쓴다
 func is_detected(e, by_pid):
-	if not detectors.has(by_pid):
-		return false
-	for dd in detectors[by_pid]:
-		if dd[0].distance_to(e.position) <= dd[1]:
-			return true
+	for q in detectors:
+		if q != by_pid and is_enemy(q, by_pid):
+			continue
+		for dd in detectors[q]:
+			if dd[0].distance_to(e.position) <= dd[1]:
+				return true
 	return false
 
 # 공격할 수 있는 적인가: 은신 중이면 감지되어야 하고, 중립 생물은 나를 공격하고 있을 때만
 func is_hostile_target(u, pid):
-	if u.pid == pid or u.dead:
+	if u.dead or not is_enemy(u.pid, pid):
 		return false
 	if u.stealthed and not is_detected(u, pid):
 		return false
 	if u.is_neutral and pid != Data.NEUTRAL_ID:
+		# 중립 생물은 우리 팀을 공격하고 있을 때만 자동으로 상대한다
 		var t = u.target
-		return t != null and is_instance_valid(t) and t.get("pid") == pid
+		return t != null and is_instance_valid(t) and t.get("pid") != null and not is_enemy(t.pid, pid)
 	return true
 
 func find_enemy_unit(pos, pid, r, hits_air = true, air_only = false):
@@ -436,7 +472,7 @@ func find_enemy(pos, pid, r, hits_air = true, air_only = false):
 	var best = null
 	var bd = r
 	for b in buildings:
-		if b.pid != pid and not b.dead and pid != Data.NEUTRAL_ID and not (b.stealthed and not is_detected(b, pid)):
+		if is_enemy(b.pid, pid) and not b.dead and pid != Data.NEUTRAL_ID and not (b.stealthed and not is_detected(b, pid)):
 			var dd = b.position.distance_to(pos) - b.radius
 			if dd <= bd:
 				bd = dd
@@ -518,6 +554,7 @@ func has_built(pid, kind):
 
 func deposit(pid, res, amount):
 	var p = players[pid]
+	amount *= p.gather_mult
 	if res == "food":
 		p.food += amount * p.upkeep_mult()
 	else:
@@ -604,7 +641,7 @@ func in_build_territory(pid, pos):
 
 func curtain_factor(u):
 	for c in curtains:
-		if c[1] != u.pid and c[0].distance_to(u.position) <= Data.CURTAIN_RADIUS:
+		if is_enemy(c[1], u.pid) and c[0].distance_to(u.position) <= Data.CURTAIN_RADIUS:
 			if not u.air:
 				return Data.CURTAIN_SLOW
 			elif c[2]:
@@ -630,7 +667,7 @@ func _tick_zones(delta):
 	for z in zones:
 		z[1] -= delta
 		for u in query_units(z[0], z[3]):
-			if u.pid != z[2] and not u.air and not u.is_neutral:
+			if is_enemy(u.pid, z[2]) and not u.air and not u.is_neutral:
 				u.take_damage(z[4] * delta, null)
 	zones = zones.filter(func(z): return z[1] > 0.0)
 
@@ -691,7 +728,7 @@ func on_kill(attacker, victim):
 	# 포식 대군: 무엇이든 처치하면 회복(범위 피해로 처치해도)
 	if attacker.get("d") != null and attacker.d.get("feast", false) and not attacker.dead:
 		attacker.hp = min(attacker.max_hp, attacker.hp + attacker.max_hp * Data.FEAST_HEAL)
-	if ap == Data.NEUTRAL_ID or victim.pid == Data.NEUTRAL_ID or ap == victim.pid:
+	if ap == Data.NEUTRAL_ID or victim.pid == Data.NEUTRAL_ID or not is_enemy(ap, victim.pid):
 		return
 	var p = players[ap]
 	if not Data.FACTIONS.get(p.faction, {}).get("loot", false):
@@ -810,7 +847,7 @@ func use_lure(u):
 	u.lure_cd = Data.LURE_CD
 	var n = 0
 	for o in query_units(u.position, Data.LURE_RADIUS):
-		if o.pid != u.pid and not o.is_neutral and o.can_fight and o.immune_t <= 0.0 and o.can_hit(u):
+		if is_enemy(o.pid, u.pid) and not o.is_neutral and o.can_fight and o.immune_t <= 0.0 and o.can_hit(u):
 			o._leave()
 			o.target = u
 			o.resume_amove = false
@@ -1260,10 +1297,10 @@ func _tick_spores(delta):
 	for z in spore_zones:
 		z[1] -= delta
 		for b in buildings:
-			if b.pid != z[2] and b.pid != Data.NEUTRAL_ID and not b.dead and b.position.distance_to(z[0]) <= Data.SPORE_ZONE_RADIUS + b.radius:
+			if is_enemy(b.pid, z[2]) and b.pid != Data.NEUTRAL_ID and not b.dead and b.position.distance_to(z[0]) <= Data.SPORE_ZONE_RADIUS + b.radius:
 				b.take_damage(Data.SPORE_ZONE_DPS * delta, null)
 		for u in query_units(z[0], Data.SPORE_ZONE_RADIUS):
-			if u.pid != z[2] and u.rooted:
+			if is_enemy(u.pid, z[2]) and u.rooted:
 				u.take_damage(Data.SPORE_ZONE_DPS * delta, null)
 	spore_zones = spore_zones.filter(func(z): return z[1] > 0.0)
 
@@ -1382,7 +1419,7 @@ func _right_click(wp):
 	var us = sel_units()
 	if us.is_empty():
 		return
-	if e != null and (e is UnitScript or e is BuildingScript) and e.pid != human_id:
+	if e != null and (e is UnitScript or e is BuildingScript) and is_enemy(e.pid, human_id):
 		for u in us:
 			u.cmd_attack(e)
 	elif e != null and e is NodeScript:
@@ -1443,13 +1480,13 @@ func _update_fog():
 	for u in units:
 		if u.carried:
 			u.visible = false
-		elif u.pid == human_id:
+		elif not is_enemy(u.pid, human_id):
 			u.visible = true
 			u.modulate.a = 0.5 if u.stealthed else 1.0
 		else:
 			u.visible = fog.is_visible_at(u.position) and (not u.stealthed or is_detected(u, human_id))
 	for b in buildings:
-		if b.pid == human_id:
+		if not is_enemy(b.pid, human_id):
 			b.visible = true
 			b.modulate.a = 0.6 if b.stealthed else 1.0
 		elif b.stealthed:
@@ -1492,7 +1529,7 @@ func _physics_process(delta):
 				p.pop_cap += Data.SAT_POP
 	for p in players:
 		p.pop_cap += 10.0 * p.level("colony")
-		p.pop_cap = min(p.pop_cap, Data.POP_MAX)
+		p.pop_cap = min(p.pop_cap, pop_max)
 		if p.alive and not p.neutral and not has_nest[p.id] and not sandbox:
 			_eliminate(p)
 	_update_territory(delta)
@@ -1517,6 +1554,8 @@ func _physics_process(delta):
 
 func _eliminate(p):
 	p.alive = false
+	if not autotest and p.id != human_id:
+		msg("%s 탈락" % p.label)
 	for u in units.duplicate():
 		if u.pid == p.id:
 			u.dead = true
@@ -1529,25 +1568,26 @@ func _eliminate(p):
 func _check_end():
 	if sandbox:
 		return
-	var alive = []
+	var teams = {}
 	for p in players:
-		if p.alive and not p.neutral:
-			alive.append(p.id)
-	var over = alive.size() <= 1
+		if p.active and p.alive and not p.neutral:
+			teams[p.team] = true
+	var over = teams.size() <= 1
+	# 사람이 탈락하면 그 사람에게는 판이 끝난다(관전 없음)
 	if not autotest and not players[human_id].alive:
 		over = true
 	if not over:
 		return
 	game_over = true
 	winner = -1
-	if alive.size() == 1:
-		winner = alive[0]
+	if teams.size() == 1:
+		winner = teams.keys()[0]
 	if autotest:
-		print("AUTOTEST over winner=%d t=%d" % [winner, int(elapsed)])
+		print("AUTOTEST over winner_team=%d t=%d" % [winner, int(elapsed)])
 		_report()
 		get_tree().quit()
 	else:
-		hud.show_game_over(winner == human_id)
+		hud.show_game_over(players[human_id].alive and winner == players[human_id].team)
 
 func _report():
 	for p in players:
@@ -1564,8 +1604,10 @@ func _report():
 		for b in buildings:
 			if b.pid == p.id:
 				nb += 1
-		print("t=%d p%d(%s) food=%d mat=%d pop=%.1f/%d units=%d workers=%d buildings=%d research=%s" % [
-			int(elapsed), p.id, p.faction, int(p.food), int(p.mat), p.pop_used, int(p.pop_cap), nu, nw, nb, str(p.research.keys())])
+		if not p.active:
+			continue
+		print("t=%d p%d(%s, 팀 %d, %s) food=%d mat=%d pop=%.1f/%d units=%d workers=%d buildings=%d research=%s" % [
+			int(elapsed), p.id, p.faction, p.team, p.diff, int(p.food), int(p.mat), p.pop_used, int(p.pop_cap), nu, nw, nb, str(p.research.keys())])
 
 func add_shot(a, b, c):
 	shots.append([a, b, 0.12, c])

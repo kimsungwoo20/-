@@ -9,6 +9,7 @@ var game
 var root
 var top_label
 var msg_label
+var roster_label
 var info_label
 var grid
 var buttons = []
@@ -28,6 +29,10 @@ func setup(g):
 	top_label = _label(16)
 	top_label.position = Vector2(12, 8)
 	root.add_child(top_label)
+
+	roster_label = _label(13)
+	roster_label.position = Vector2(12, 32)
+	root.add_child(roster_label)
 
 	msg_label = _label(18)
 	msg_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
@@ -99,10 +104,16 @@ func show_game_over(won):
 	over_panel.add_child(l)
 	var b = Button.new()
 	b.text = "다시 하기"
-	b.position = Vector2(110, 95)
+	b.position = Vector2(30, 95)
 	b.size = Vector2(140, 44)
 	b.pressed.connect(func(): game.get_tree().reload_current_scene())
 	over_panel.add_child(b)
+	var b2 = Button.new()
+	b2.text = "방으로"
+	b2.position = Vector2(190, 95)
+	b2.size = Vector2(140, 44)
+	b2.pressed.connect(func(): game.get_tree().change_scene_to_file("res://scenes/lobby.tscn"))
+	over_panel.add_child(b2)
 
 func press_button(i):
 	if i < buttons.size() and not buttons[i].disabled:
@@ -152,6 +163,19 @@ func _process(delta):
 		int(p.food), int(p.mat), _fmt(p.pop_used), int(p.pop_cap), up, mins, secs]
 	if p.succession > 0.0:
 		top_label.text += "    여왕 계승 중 %d초" % int(ceil(p.succession))
+	var parts = []
+	for q in game.players:
+		if not q.active or q.neutral:
+			continue
+		var s = "%s(%s)" % [q.label, Data.FACTIONS[q.faction]["name"]]
+		if game.match_mode == "team":
+			s += " 팀%d" % (q.team + 1)
+			if q.id != game.human_id and not game.is_enemy(q.id, game.human_id):
+				s += " 아군"
+		if not q.alive:
+			s += " 탈락"
+		parts.append(s)
+	roster_label.text = "   ".join(parts)
 	if msg_t > 0.0:
 		msg_t -= real
 		if msg_t <= 0.0:

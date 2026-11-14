@@ -13,6 +13,7 @@ var defend_pos = Vector2.ZERO
 var defend_t = 0.0
 var branch_pick = ""
 var plan = {}
+var diff = {}
 # 군대개미 이주
 var migrating = false
 var migrate_to = Vector2.ZERO
@@ -51,6 +52,8 @@ func setup(g, id):
 	game = g
 	pid = id
 	plan = PLANS[game.players[id].faction]
+	diff = Data.DIFFS[game.players[id].diff]
+	wave_size = diff["wave"]
 	branch_pick = plan["branches"][randi() % 2]
 
 func on_attacked(b):
@@ -60,7 +63,8 @@ func on_attacked(b):
 func tick(delta):
 	t += delta
 	defend_t -= delta
-	if t < 1.0:
+	# 난이도에 따라 판단 간격이 다르다(쉬움 2.5초, 보통 1초, 어려움 0.6초)
+	if t < diff["tick"]:
 		return
 	t = 0.0
 	var p = game.players[pid]
@@ -108,7 +112,7 @@ func tick(delta):
 	var queued = 0
 	for n in nests:
 		queued += n.queue.size()
-	var want = min(14 + 6 * (nests.size() - 1), plan.get("max_workers", 40))
+	var want = int(min(14 + 6 * (nests.size() - 1), plan.get("max_workers", 40)) * diff["workers"])
 	for n in nests:
 		if workers.size() + queued < want and n.queue.is_empty():
 			if game.enqueue_unit(n, "worker"):
@@ -323,7 +327,7 @@ func _command_army(army, main):
 		var bd = 1e12
 		for b in game.buildings:
 			# 감지하지 못한 은폐 건물은 공격 목표로 삼지 않는다
-			if b.pid != pid and not b.dead and not (b.stealthed and not game.is_detected(b, pid)):
+			if game.is_enemy(b.pid, pid) and not b.dead and not (b.stealthed and not game.is_detected(b, pid)):
 				var dd = b.position.distance_squared_to(main.position)
 				if dd < bd:
 					bd = dd
@@ -395,7 +399,7 @@ func _nomad(main):
 					if b.pid == pid and b.mode == "march" and b.march_dest == null and not b.unpack():
 						b.march_to(b.position + Vector2(70, 0).rotated(randf() * TAU))
 		return
-	nomad_t -= 1.0
+	nomad_t -= diff["tick"]
 	if nomad_t > 0.0 or game.elapsed < 200.0 or attacking or defend_t > 0.0:
 		return
 	nomad_t = 10.0

@@ -692,7 +692,7 @@ func take_damage(amount, attacker):
 	if is_worker and pp.has("hitchhiker"):
 		amount *= Data.HITCH_TAKEN
 		# 일꾼 등에 탄 소형 개미가 반격한다
-		if attacker != null and is_instance_valid(attacker) and attacker.get("pid") != pid and attacker.has_method("take_damage") and not attacker.get("dead"):
+		if attacker != null and is_instance_valid(attacker) and attacker.get("pid") != null and game.is_enemy(attacker.pid, pid) and attacker.has_method("take_damage") and not attacker.get("dead"):
 			attacker.take_damage(Data.HITCH_REFLECT, null)
 	if attacker != null and is_instance_valid(attacker) and attacker.get("is_neutral") != null and attacker.d["reach"] > 30.0 and game.curtain_cover(self):
 		amount *= Data.CURTAIN_RANGED_TAKEN

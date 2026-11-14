@@ -4,6 +4,18 @@ extends RefCounted
 
 const MAP_SIZE = Vector2(3200, 2000)
 const POP_MAX = 200.0
+const POP_MAX_BIG = 150.0              # 4~5인 판의 최대 인구(화면 안 유닛 수 관리)
+const MAX_PLAYERS = 5
+const PLAYER_COLORS = [Color(0.9, 0.25, 0.15), Color(0.25, 0.5, 0.95), Color(0.95, 0.8, 0.2),
+	Color(0.7, 0.35, 0.9), Color(0.2, 0.85, 0.8)]
+const FACTION_IDS = ["fire", "leaf", "weaver", "trap", "army"]
+# 인공지능 난이도: tick = 판단 간격(초), workers = 일꾼 수 배율, wave = 첫 공격 병력 인구, gather = 채집 배율
+const DIFFS = {
+	"easy": {"name": "쉬움", "tick": 2.5, "workers": 0.6, "wave": 14, "gather": 1.0},
+	"normal": {"name": "보통", "tick": 1.0, "workers": 1.0, "wave": 8, "gather": 1.0},
+	"hard": {"name": "어려움", "tick": 0.6, "workers": 1.0, "wave": 8, "gather": 1.2},
+}
+const BALANCE_GATHER = 0.25            # 인원 불균형 보정: 모자란 인원 1명당 채집 +25%
 const NEST_POP = [30, 60, 90]          # 주 둥지 등급 I / II / III
 const SAT_POP = 15                     # 위성 둥지
 const NEST_UPGRADE = {
@@ -34,7 +46,7 @@ const TROPH_PENALTY = [1.0, 0.75, 0.5] # 영양 교환 단계별 유지비 감�
 const WAVE_PENALTY = 1.25
 
 # ---- 지도 요소 (3단계) ----
-const NEUTRAL_ID = 2                   # players[2] 는 중립 생물 전용 가상 플레이어
+const NEUTRAL_ID = 5                   # players[5] 는 중립 생물 전용 가상 플레이어(0~4 는 자리)
 const LEASH = 260.0                    # 중립 생물이 둥지에서 이만큼 끌려 나오면 돌아간다
 const NEUTRAL_RESPAWN = 180.0
 const CORPSE_DECAY = 180.0

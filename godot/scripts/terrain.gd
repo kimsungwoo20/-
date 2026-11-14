@@ -14,16 +14,21 @@ var cells = PackedByteArray()
 var nav = {}             # "ground" / "raft" -> AStarGrid2D
 var bridged = PackedInt32Array()   # 칸마다 그 위에 걸린 살아있는 다리 수
 
-func setup():
+func setup(features = null):
 	w = int(ceil(Data.MAP_SIZE.x / Data.FOG_CELL))
 	h = int(ceil(Data.MAP_SIZE.y / Data.FOG_CELL))
 	cells.resize(w * h)
 	cells.fill(GROUND)
 	bridged.resize(w * h)
 	bridged.fill(0)
-	for r in Data.TERRAIN:
-		_fill(r[0], r[1], false)
-		_fill(r[0], r[1], true)
+	if features == null:
+		# 기본: 2인 지도(왼쪽 절반을 적고 좌우 대칭)
+		for r in Data.TERRAIN:
+			_fill(r[0], r[1], false)
+			_fill(r[0], r[1], true)
+	else:
+		for r in features:
+			_fill(r[0], r[1], false)
 	_build_nav()
 
 # 좌우 대칭으로 채운다
