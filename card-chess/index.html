@@ -1,0 +1,1108 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>체크 앤 카드</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* Layout: a card table. The board sits on the left like a playmat, the active player's hand and the game record stack on the right. */
+:root {
+  --bg: #171b28;
+  --panel: #202537;
+  --panel-2: #292f45;
+  --line: #3a4260;
+  --fg: #eee7d6;
+  --muted: #9ea4ba;
+  --accent: #f1b53d;
+  --danger: #ef5c4d;
+  --rare: #63b4f2;
+  --common: #aab3c7;
+  --sq-light: #ead9b8;
+  --sq-dark: #a07855;
+  --white-pc: #fffaf0;
+  --black-pc: #1d1a19;
+  --font-display: "Black Han Sans", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+  --font-body: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-glyph: "Segoe UI Symbol", "DejaVu Sans", "Noto Sans Symbols 2", "Arial Unicode MS", serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 14px; line-height: 1.5; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, .sq:focus-visible, .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.app { max-width: 1180px; margin: 0 auto; padding-block: 14px 28px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 14px; }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+.top h1 { font-family: var(--font-display); font-weight: 400; font-size: 28px; letter-spacing: .02em; margin: 0; line-height: 1; }
+.top h1 span { color: var(--accent); }
+.status { flex: 1 1 220px; min-width: 0; font-weight: 700; }
+.status .chk { color: var(--danger); }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font-size: 13px; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); color: #23180a; border-color: var(--accent); font-weight: 700; }
+.btn.ghost { background: transparent; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
+@media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+.board-wrap { display: flex; flex-direction: column; gap: 8px; align-items: center; min-width: 0; }
+.pbar { width: min(100%, 620px); display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--panel); border-radius: 10px; border: 1px solid transparent; }
+.pbar.active { border-color: var(--accent); }
+.pbar .who { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; border: 1px solid var(--muted); }
+.dot.w { background: var(--white-pc); } .dot.b { background: var(--black-pc); }
+.pbar .meta { color: var(--muted); font-size: 12px; }
+.pbar .caps { margin-left: auto; font-family: var(--font-glyph); font-size: 15px; letter-spacing: -1px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+
+.board { width: min(100%, 620px); aspect-ratio: 1; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 6px #3b2b1e, 0 14px 40px rgba(0,0,0,.45); container-type: inline-size; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+.sq { position: relative; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.sq.l { background: var(--sq-light); } .sq.d { background: var(--sq-dark); }
+.sq .crd { position: absolute; font-size: 2.1cqw; font-weight: 700; opacity: .7; pointer-events: none; }
+.sq.l .crd { color: var(--sq-dark); } .sq.d .crd { color: var(--sq-light); }
+.crd.rk { top: 2px; left: 3px; } .crd.fl { bottom: 1px; right: 4px; }
+.sq.last::before { content: ""; position: absolute; inset: 0; background: rgba(241,181,61,.28); }
+.sq.sel::before { content: ""; position: absolute; inset: 0; background: rgba(241,181,61,.55); }
+.sq.check::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, rgba(239,92,77,.95) 0%, rgba(239,92,77,.35) 60%, transparent 75%); }
+.sq.mv::after { content: ""; position: absolute; width: 28%; height: 28%; border-radius: 50%; background: rgba(30,40,30,.35); z-index: 3; }
+.sq.cap::after { content: ""; position: absolute; inset: 4%; border-radius: 50%; border: .9cqw solid rgba(30,40,30,.45); z-index: 3; }
+.sq.shoot::after { content: "🎯"; position: absolute; font-size: 4cqw; top: 2%; right: 4%; z-index: 4; }
+.sq.swap::after { content: ""; position: absolute; inset: 6%; border-radius: 22%; border: .8cqw dashed #8c5ae0; z-index: 3; }
+.sq.tgt::after { content: ""; position: absolute; inset: 3%; border-radius: 12%; border: .8cqw solid var(--accent); box-shadow: inset 0 0 1.5cqw rgba(241,181,61,.6); z-index: 3; animation: pulse 1.2s ease-in-out infinite; }
+.sq.picked::after { content: ""; position: absolute; inset: 0; background: rgba(241,181,61,.6); z-index: 1; }
+@keyframes pulse { 50% { opacity: .55; } }
+
+.pc { position: relative; z-index: 2; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.pc.std { font-family: var(--font-glyph); font-size: 9.4cqw; line-height: 1; }
+.pc.std.w { color: var(--white-pc); text-shadow: 0 0 1px #000, 0 0 .3cqw #000, 0 .3cqw .6cqw rgba(0,0,0,.4); }
+.pc.std.b { color: var(--black-pc); text-shadow: 0 0 1px #fff8, 0 .3cqw .5cqw rgba(0,0,0,.25); }
+.pc.sp { width: 10cqw; height: 10cqw; border-radius: 50%; font-size: 6cqw; line-height: 1; }
+.pc.sp.w { background: radial-gradient(circle at 35% 30%, #fffdf6, #d9cfbb); box-shadow: 0 0 0 .45cqw #fff, 0 .4cqw .8cqw rgba(0,0,0,.4); }
+.pc.sp.b { background: radial-gradient(circle at 35% 30%, #4a4442, #141211); box-shadow: 0 0 0 .45cqw #000, 0 .4cqw .8cqw rgba(0,0,0,.4); }
+.pc.sp.n { font-size: 7cqw; }
+.pc.sp.small { width: 7.4cqw; height: 7.4cqw; font-size: 4cqw; }
+.badge { position: absolute; font-size: 2.4cqw; font-weight: 700; line-height: 1; padding: .35cqw .6cqw; border-radius: 1cqw; background: #111; color: #fff; font-family: var(--font-body); }
+.badge.tl { top: -.8cqw; left: -.8cqw; } .badge.tr { top: -.8cqw; right: -.8cqw; } .badge.br { bottom: -.8cqw; right: -.8cqw; background: var(--danger); }
+.pips { position: absolute; bottom: -1.2cqw; display: flex; gap: .4cqw; }
+.pips i { width: 1.4cqw; height: 1.4cqw; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 .25cqw #fff; }
+.pc.frozen { filter: saturate(.3) brightness(1.15); }
+.ice { position: absolute; z-index: 5; top: 2%; right: 4%; font-size: 3.6cqw; pointer-events: none; }
+.tile { position: absolute; pointer-events: none; z-index: 1; }
+.tile.web { inset: 0; display: flex; align-items: center; justify-content: center; font-size: 8cqw; opacity: .45; }
+.tile.banana { bottom: 3%; left: 6%; font-size: 4.2cqw; z-index: 4; }
+.tile.portal { inset: 8%; border-radius: 50%; border: 1cqw solid; box-shadow: 0 0 2cqw currentColor, inset 0 0 1.5cqw currentColor; }
+.tile.meteor { inset: 0; background: repeating-linear-gradient(45deg, rgba(239,92,77,.35) 0 1.2cqw, transparent 1.2cqw 2.4cqw); display: flex; align-items: flex-start; justify-content: flex-start; font-size: 3.6cqw; z-index: 4; padding: 2%; }
+
+.side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.panel { background: var(--panel); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.panel h2 { font-family: var(--font-display); font-weight: 400; font-size: 17px; margin: 0; letter-spacing: .02em; }
+.panel .sub { color: var(--muted); font-size: 12px; }
+.hand { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.card { position: relative; background: var(--panel-2); border: 2px solid var(--line); border-radius: 10px; padding: 8px 6px 10px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; min-height: 118px; transition: transform .15s ease; }
+.card:hover { transform: translateY(-3px); }
+.card.t1 { border-color: var(--common); } .card.t2 { border-color: var(--rare); } .card.t3 { border-color: var(--accent); box-shadow: 0 0 14px rgba(241,181,61,.25); }
+.card.on { transform: translateY(-5px); background: #343b56; }
+.card.off { opacity: .5; }
+.card .ic { font-size: 30px; line-height: 1.2; }
+.card .nm { font-weight: 700; font-size: 13px; line-height: 1.25; text-wrap: balance; }
+.card .kd { font-size: 11px; color: var(--muted); }
+.card.empty { border-style: dashed; color: var(--muted); justify-content: center; font-size: 12px; cursor: default; }
+.card.empty:hover { transform: none; }
+.card.back { background: repeating-linear-gradient(135deg, #2d3450 0 6px, #262c44 6px 12px); cursor: default; }
+.detail { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.detail .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.detail .title { font-weight: 700; font-size: 15px; }
+.tier { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 99px; letter-spacing: .03em; }
+.tier.t1 { background: var(--common); color: #1c2030; } .tier.t2 { background: var(--rare); color: #0f2233; } .tier.t3 { background: var(--accent); color: #2a1b04; }
+.prompt { color: var(--accent); font-weight: 700; }
+.reason { color: var(--danger); font-size: 12px; }
+.info { font-size: 13px; }
+.info b { font-size: 14px; }
+.log { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto; display: flex; flex-direction: column-reverse; gap: 2px; font-size: 13px; }
+.log li { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; border-bottom: 1px solid #2a3047; }
+.log .n { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 22px; font-size: 11px; }
+.log .ev { color: var(--muted); }
+.log .t { min-width: 0; overflow-wrap: anywhere; }
+
+.overlay { position: fixed; inset: 0; z-index: 50; background: rgba(15,18,28,.86); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 20px max(16px, env(safe-area-inset-right, 0px)) 20px max(16px, env(safe-area-inset-left, 0px)); }
+.sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px; width: min(100%, 460px); max-height: 88vh; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.sheet.wide { width: min(100%, 760px); }
+.sheet h2 { font-family: var(--font-display); font-weight: 400; font-size: 26px; margin: 0; line-height: 1.15; text-wrap: balance; }
+.sheet p { margin: 0; color: var(--muted); }
+.sheet .recent { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
+.sheet .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.big-dot { width: 54px; height: 54px; border-radius: 50%; border: 3px solid var(--accent); }
+.promo { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.promo button { font-family: var(--font-glyph); font-size: 40px; background: var(--sq-light); color: #222; border: none; border-radius: 10px; padding: 6px 0; }
+.guide { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.gitem { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gitem .h { display: flex; gap: 8px; align-items: center; font-weight: 700; }
+.gitem .h .e { font-size: 22px; font-family: var(--font-glyph); }
+.gitem p { font-size: 12.5px; color: var(--fg); opacity: .85; }
+.gsec { font-family: var(--font-display); font-weight: 400; font-size: 16px; color: var(--accent); margin: 6px 0 -4px; letter-spacing: .03em; }
+.toasts { position: fixed; z-index: 60; top: calc(12px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; width: min(92vw, 420px); }
+.toast { background: #0e111b; border: 1px solid var(--accent); padding: 8px 14px; border-radius: 99px; font-weight: 700; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.4); animation: tin .25s ease-out; text-align: center; }
+@keyframes tin { from { transform: translateY(-8px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <h1>체크 <span>&amp;</span> 카드</h1>
+    <div class="status" id="status"></div>
+    <div class="tools">
+      <button class="btn" id="btnUnits">유닛 도감</button>
+      <button class="btn" id="btnCards">카드 도감</button>
+      <button class="btn" id="btnFlip">보드 뒤집기: 끔</button>
+      <button class="btn" id="btnResign">기권</button>
+      <button class="btn" id="btnNew">새 게임</button>
+    </div>
+  </header>
+  <main class="layout">
+    <section class="board-wrap">
+      <div class="pbar" id="barTop"></div>
+      <div class="board" id="board" aria-label="체스판"></div>
+      <div class="pbar" id="barBottom"></div>
+    </section>
+    <aside class="side">
+      <div class="panel">
+        <h2 id="handTitle">손패</h2>
+        <div class="hand" id="hand"></div>
+        <div id="cardAction"></div>
+      </div>
+      <div class="panel">
+        <h2>말 정보</h2>
+        <div class="info" id="info"></div>
+      </div>
+      <div class="panel">
+        <h2>기록</h2>
+        <ol class="log" id="log"></ol>
+      </div>
+    </aside>
+  </main>
+</div>
+<div class="overlay" id="overlay" hidden></div>
+<div class="toasts" id="toasts"></div>
+
+<script>
+'use strict';
+/* ================= 기본 상수 ================= */
+const W = 'w', BL = 'b', NEU = 'n';
+const opp = c => (c === W ? BL : W);
+const fwd = c => (c === W ? -1 : 1);
+const inB = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
+const D8 = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+const ORTH = [[-1,0],[1,0],[0,-1],[0,1]];
+const DIAG = [[-1,-1],[-1,1],[1,-1],[1,1]];
+const KN = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+const PAWNLIKE = new Set(['P', 'zombie', 'mini', 'bomber']);
+const UNIQUE_GROUP = { giant: 'giant', slime: 'slime', train: 'train', wizard: 'wizard', egg: 'dragon', dragon: 'dragon' };
+const COLOR_NAME = { w: '백', b: '흑', n: '중립' };
+const HAND_MAX = 3;
+const clone = o => JSON.parse(JSON.stringify(o));
+const sqEq = (a, b) => a[0] === b[0] && a[1] === b[1];
+const adj = (a, b) => Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])) === 1;
+const rand = n => Math.floor(Math.random() * n);
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = rand(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const sqName = s => 'abcdefgh'[s[1]] + (8 - s[0]);
+
+const UNITS = {
+  K: { name: '킹', g: '♚', desc: '8방향으로 1칸 움직입니다. 카드로는 잡히거나 사라지지 않습니다. 체크메이트를 당하면 집니다.' },
+  Q: { name: '퀸', g: '♛', desc: '가로, 세로, 대각선으로 원하는 만큼 움직입니다.' },
+  R: { name: '룩', g: '♜', desc: '가로, 세로로 원하는 만큼 움직입니다.' },
+  B: { name: '비숍', g: '♝', desc: '대각선으로 원하는 만큼 움직입니다.' },
+  N: { name: '나이트', g: '♞', desc: 'L자로 뛰어 움직입니다. 다른 말을 뛰어넘을 수 있습니다.' },
+  P: { name: '폰', g: '♟', desc: '앞으로 1칸(처음엔 2칸) 가고, 대각선 앞의 말을 잡습니다. 끝 줄에 닿으면 승진합니다.' },
+  giant: { name: '거신병', e: '🗿', desc: '8방향으로 최대 2칸. 가는 길의 상대 말을 전부 짓밟아 잡습니다. 체력 2: 처음 공격받으면 체력만 줄고, 공격한 말은 제자리로 튕겨 납니다.' },
+  dragon: { name: '드래곤', e: '🐉', desc: '퀸 이동과 나이트 이동을 둘 다 할 수 있습니다.' },
+  egg: { name: '드래곤 알', e: '🥚', desc: '움직이지 못합니다. 내 턴이 3번 지날 때까지 살아남으면 드래곤이 부화합니다.' },
+  archer: { name: '궁수', e: '🏹', desc: '상하좌우로 1칸 움직입니다(이동으로는 못 잡음). 대신 상하좌우 3칸 안에서 처음 만나는 상대 말을 제자리에서 저격합니다.' },
+  ninja: { name: '닌자', e: '🥷', desc: '나이트처럼 움직입니다. 말을 잡으면 원래 칸으로 돌아옵니다.' },
+  slime: { name: '슬라임', e: '🟢', desc: '8방향으로 1칸. 잡히면 양옆 빈칸에 미니 슬라임 2개로 갈라집니다.' },
+  mini: { name: '미니 슬라임', e: '🟢', small: true, desc: '폰처럼 움직입니다. 두 칸 전진과 승진은 할 수 없습니다.' },
+  train: { name: '기관차', e: '🚂', desc: '직접 움직이지 않습니다. 내 턴이 끝날 때마다 앞으로 1칸 나아가며 상대 말을 잡습니다. 킹과 아군 앞에서는 멈추고, 보드 끝에 닿으면 떠납니다.' },
+  bomber: { name: '폭탄병', e: '🧨', desc: '폰처럼 움직입니다(승진 불가). 잡히면 자기 칸과 주변 8칸이 폭발합니다. 킹은 폭발에 다치지 않습니다.' },
+  spider: { name: '거미', e: '🕷️', desc: '8방향으로 1칸. 떠난 칸에 거미줄을 남깁니다. 상대 말이 거미줄을 밟으면 한 턴 동안 묶입니다.' },
+  mimic: { name: '미믹', e: '📦', desc: '움직이지 않습니다. 상대 말이 잡으러 오면 오히려 그 말을 잡아먹고 룩으로 변합니다. 킹은 미믹을 그냥 잡을 수 있고, 저격과 폭발에는 그냥 당합니다.' },
+  monkey: { name: '원숭이', e: '🐒', desc: '8방향으로 1칸(이동으로는 못 잡음). 바로 옆 말을 뛰어넘을 수 있고, 뛰어넘은 상대 말은 잡힙니다. 잡았다면 이어서 계속 점프할 수 있습니다.' },
+  wizard: { name: '마법사', e: '🧙', desc: '8방향으로 1칸. 또는 이동 대신 킹이 아닌 아군 말 하나와 자리를 바꿉니다(보라색 칸).' },
+  angel: { name: '수호천사', e: '😇', desc: '8방향으로 1칸(잡기 불가). 잡히지 않고, 주변 8칸의 아군 폰도 지켜줍니다. 내 턴이 4번 지나면 떠납니다.' },
+  mirror: { name: '미러맨', e: '🪞', desc: '상대가 직전에 움직인 말의 이동 방식을 따라 합니다. 상대가 특수 유닛을 움직였다면 킹처럼 1칸 움직입니다.' },
+  frog: { name: '개구리', e: '🐸', desc: '앞으로 1칸만 갈 수 있고 아무것도 잡지 못합니다. 상대 턴 기준 2턴 뒤 원래 말로 돌아옵니다.' },
+  zombie: { name: '좀비 폰', e: '🧟', desc: '폰처럼 움직입니다. 두 칸 전진과 승진은 할 수 없습니다.' },
+  chicken: { name: '닭', e: '🐔', desc: '누구 편도 아닙니다. 매 턴 아무 데로나 1칸 움직입니다. 닭을 잡은 사람은 카드 1장을 받습니다.' },
+};
+const unitIcon = p => UNITS[p.type].g ? UNITS[p.type].g + '︎' : UNITS[p.type].e;
+
+/* ================= 상태 ================= */
+function mk(st, color, type, extra) { return Object.assign({ id: st.nid++, color, type, moved: false }, extra || {}); }
+function newState() {
+  const st = { board: [], tiles: [], turn: W, ply: 1, turns: { w: 0, b: 0 }, hands: { w: [], b: [] }, cardUsed: false,
+    ep: null, ban: { w: null, b: null }, meteors: [], captured: { w: [], b: [] }, lastMoved: { w: null, b: null },
+    pendingDraw: { w: 2, b: 2 }, blasts: [], over: null, nid: 1, events: [], lastMove: null, portalSeq: 0 };
+  for (let r = 0; r < 8; r++) { st.board.push(Array(8).fill(null)); st.tiles.push(Array.from({ length: 8 }, () => ({}))); }
+  const back = ['R','N','B','Q','K','B','N','R'];
+  for (let c = 0; c < 8; c++) {
+    st.board[0][c] = mk(st, BL, back[c]); st.board[1][c] = mk(st, BL, 'P');
+    st.board[6][c] = mk(st, W, 'P'); st.board[7][c] = mk(st, W, back[c]);
+  }
+  return st;
+}
+const at = (st, r, c) => (inB(r, c) ? st.board[r][c] : null);
+const pieceAt = (st, s) => st.board[s[0]][s[1]];
+const ev = (st, msg) => st.events.push(msg);
+function moveTo(st, a, b) { st.board[b[0]][b[1]] = st.board[a[0]][a[1]]; st.board[a[0]][a[1]] = null; }
+function eachPiece(st, fn) { for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) if (st.board[r][c]) fn(st.board[r][c], r, c); }
+function kingPos(st, col) { for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) { const p = st.board[r][c]; if (p && p.type === 'K' && p.color === col) return [r, c]; } return null; }
+const realType = q => (q.frog ? q.frog.orig : q.type);
+
+function invulnerable(st, r, c) {
+  const q = st.board[r][c]; if (!q) return false;
+  if (q.type === 'angel') return true;
+  if (PAWNLIKE.has(q.type)) for (const [dr, dc] of D8) { const a = at(st, r + dr, c + dc); if (a && a.type === 'angel' && a.color === q.color) return true; }
+  return false;
+}
+function hostile(st, col, r, c) { const q = at(st, r, c); return !!q && q.color !== col && !invulnerable(st, r, c); }
+
+/* ================= 이동 생성 ================= */
+function gen(st, r, c, attack) {
+  const p = st.board[r][c], col = p.color, out = [];
+  const add = (tr, tc, o) => out.push(Object.assign({ from: [r, c], to: [tr, tc], click: [tr, tc], caps: [] }, o || {}));
+  const step = (tr, tc, mode) => {
+    if (!inB(tr, tc)) return false;
+    const q = st.board[tr][tc];
+    if (!q) { if (mode !== 'cap') add(tr, tc); return true; }
+    if (mode !== 'move' && hostile(st, col, tr, tc)) add(tr, tc, { caps: [[tr, tc]] });
+    return false;
+  };
+  const slide = dirs => { for (const [dr, dc] of dirs) { let tr = r + dr, tc = c + dc; while (step(tr, tc, 'both')) { tr += dr; tc += dc; } } };
+  const steps = (dirs, mode) => { for (const [dr, dc] of dirs) step(r + dr, c + dc, mode || 'both'); };
+  const pawn = (dbl, promo, ep) => {
+    const f = fwd(col), last = col === W ? 0 : 7;
+    const pr = tr => (promo && tr === last ? { promo: 'Q' } : {});
+    if (inB(r + f, c) && !st.board[r + f][c]) {
+      add(r + f, c, pr(r + f));
+      if (dbl && !p.moved && inB(r + 2 * f, c) && !st.board[r + 2 * f][c]) add(r + 2 * f, c, { dbl: true });
+    }
+    for (const dc of [-1, 1]) {
+      const tr = r + f, tc = c + dc; if (!inB(tr, tc)) continue;
+      if (hostile(st, col, tr, tc)) add(tr, tc, Object.assign({ caps: [[tr, tc]] }, pr(tr)));
+      else if (ep && st.ep && st.ep.color !== col && st.ep.sq[0] === tr && st.ep.sq[1] === tc && !st.board[tr][tc]) add(tr, tc, { caps: [st.ep.pawn], ep: true });
+    }
+  };
+  let t = p.type;
+  if (t === 'mirror') t = ({ Q: 'Q', R: 'R', B: 'B', N: 'N', P: 'mP', K: 'K' })[st.lastMoved[opp(col)]] || 'K1';
+  switch (t) {
+    case 'K': steps(D8); if (!attack) castles(st, r, c, add); break;
+    case 'K1': steps(D8); break;
+    case 'Q': slide(D8); break;
+    case 'R': slide(ORTH); break;
+    case 'B': slide(DIAG); break;
+    case 'N': steps(KN); break;
+    case 'P': pawn(true, true, true); break;
+    case 'bomber': pawn(true, false, false); break;
+    case 'zombie': case 'mini': case 'mP': pawn(false, false, false); break;
+    case 'frog': step(r + fwd(col), c, 'move'); break;
+    case 'dragon': slide(D8); steps(KN); break;
+    case 'slime': case 'spider': steps(D8); break;
+    case 'angel': steps(D8, 'move'); break;
+    case 'archer':
+      steps(ORTH, 'move');
+      for (const [dr, dc] of ORTH) for (let k = 1; k <= 3; k++) {
+        const tr = r + dr * k, tc = c + dc * k; if (!inB(tr, tc)) break;
+        if (!st.board[tr][tc]) continue;
+        if (hostile(st, col, tr, tc)) add(r, c, { click: [tr, tc], caps: [[tr, tc]], kind: 'shoot' });
+        break;
+      }
+      break;
+    case 'ninja':
+      for (const [dr, dc] of KN) {
+        const tr = r + dr, tc = c + dc; if (!inB(tr, tc)) continue;
+        if (!st.board[tr][tc]) add(tr, tc);
+        else if (hostile(st, col, tr, tc)) add(r, c, { click: [tr, tc], caps: [[tr, tc]], kind: 'hitrun' });
+      }
+      break;
+    case 'giant':
+      for (const [dr, dc] of D8) {
+        const caps = [], path = [];
+        for (let k = 1; k <= 2; k++) {
+          const tr = r + dr * k, tc = c + dc * k; if (!inB(tr, tc)) break;
+          const q = st.board[tr][tc]; path.push([tr, tc]);
+          if (!q) { add(tr, tc, { caps: caps.slice(), path: path.slice(), kind: 'giant' }); continue; }
+          if (!hostile(st, col, tr, tc)) break;
+          caps.push([tr, tc]); add(tr, tc, { caps: caps.slice(), path: path.slice(), kind: 'giant' });
+          if (q.type === 'K' || q.type === 'mimic' || (q.hp || 0) > 1) break;
+        }
+      }
+      break;
+    case 'monkey': {
+      steps(D8, 'move');
+      const dfs = (pr, pc, caps, path, depth) => {
+        for (const [dr, dc] of D8) {
+          const mr = pr + dr, mc = pc + dc, lr = pr + 2 * dr, lc = pc + 2 * dc;
+          if (!inB(lr, lc)) continue;
+          const m = st.board[mr][mc]; if (!m || (mr === r && mc === c)) continue;
+          if (st.board[lr][lc] || (lr === r && lc === c) || path.some(s => s[0] === lr && s[1] === lc)) continue;
+          const already = caps.some(s => s[0] === mr && s[1] === mc);
+          const isCap = !already && hostile(st, col, mr, mc) && (attack || m.type !== 'K');
+          if (depth > 0 && !isCap) continue;
+          const nc = isCap ? caps.concat([[mr, mc]]) : caps, np = path.concat([[lr, lc]]);
+          add(lr, lc, { caps: nc, path: np, kind: 'monkey' });
+          if (isCap && m.type !== 'mimic' && depth < 3) dfs(lr, lc, nc, np, depth + 1);
+        }
+      };
+      dfs(r, c, [], [], 0);
+      break;
+    }
+    case 'wizard':
+      steps(D8);
+      if (!attack) eachPiece(st, (q, i, j) => { if (q.color === col && q.type !== 'K' && q !== p) add(i, j, { kind: 'swap' }); });
+      break;
+    default: break; // egg, mimic, train, chicken: 직접 못 움직임
+  }
+  return out;
+}
+
+function castles(st, r, c, add) {
+  const p = st.board[r][c];
+  if (p.moved || inCheck(st, p.color)) return;
+  for (const [rc, dir] of [[7, 1], [0, -1]]) {
+    const rook = at(st, r, rc);
+    if (!rook || rook.type !== 'R' || rook.color !== p.color || rook.moved) continue;
+    let clear = true;
+    for (let x = Math.min(c, rc) + 1; x < Math.max(c, rc); x++) if (st.board[r][x]) clear = false;
+    if (!clear || !inB(r, c + 2 * dir)) continue;
+    if (isAttacked(st, r, c + dir, opp(p.color)) || isAttacked(st, r, c + 2 * dir, opp(p.color))) continue;
+    add(r, c + 2 * dir, { kind: 'castle', rook: [r, rc], rookTo: [r, c + dir] });
+  }
+}
+
+function isAttacked(st, r, c, by) {
+  let placed = false;
+  if (!st.board[r][c]) { st.board[r][c] = { type: 'K', color: opp(by), dummy: true }; placed = true; }
+  let hit = false;
+  outer: for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+    const q = st.board[i][j];
+    if (!q || q.color !== by || q.dummy) continue;
+    for (const m of gen(st, i, j, true)) if (m.caps.some(s => s[0] === r && s[1] === c)) { hit = true; break outer; }
+  }
+  if (placed) st.board[r][c] = null;
+  return hit;
+}
+function inCheck(st, col) { const k = kingPos(st, col); return k ? isAttacked(st, k[0], k[1], opp(col)) : false; }
+
+function pieceLocked(st, p) {
+  if (p.frozen && st.ply <= p.frozen) return true;
+  const b = st.ban[p.color];
+  return !!(b && st.ply <= b.until && b.type === p.type);
+}
+function legalMoves(st, col, ignoreLocks, first) {
+  const res = [];
+  for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+    const q = st.board[i][j];
+    if (!q || q.color !== col) continue;
+    if (!ignoreLocks && pieceLocked(st, q)) continue;
+    for (const m of gen(st, i, j, false)) {
+      if (m.caps.some(s => { const x = st.board[s[0]][s[1]]; return x && x.type === 'K'; })) continue;
+      const s2 = clone(st); applyMove(s2, m);
+      if (!inCheck(s2, col)) { res.push(m); if (first) return res; }
+    }
+  }
+  if (!res.length && !ignoreLocks) return legalMoves(st, col, true, first);
+  return res;
+}
+
+/* ================= 이동 적용 ================= */
+function damage(st, r, c, by) {
+  const q = st.board[r][c]; if (!q) return true;
+  if (q.type === 'K' || invulnerable(st, r, c)) return false;
+  if ((q.hp || 0) > 1) { q.hp--; ev(st, '🗿 거신병이 버텼어요 (체력 ' + q.hp + ')'); return false; }
+  st.board[r][c] = null; onRemoved(st, q, r, c, by); return true;
+}
+function onRemoved(st, q, r, c, by) {
+  const t = realType(q);
+  if (by && by !== q.color) {
+    if (q.color !== NEU) st.captured[by].push(t);
+    if (t === 'Q' || t === 'R' || t === 'chicken') { st.pendingDraw[by]++; ev(st, (t === 'chicken' ? '🐔 닭을 잡아서' : '👑 큰 말을 잡아서') + ' ' + COLOR_NAME[by] + '이 카드를 받아요'); }
+  }
+  if (t === 'slime') {
+    let n = 0;
+    for (const dc of [-1, 1]) if (inB(r, c + dc) && !st.board[r][c + dc]) { st.board[r][c + dc] = mk(st, q.color, 'mini', { moved: true }); n++; }
+    if (n) ev(st, '🟢 슬라임이 갈라졌어요');
+  }
+  if (t === 'bomber') st.blasts.push([r, c]);
+}
+function processBlasts(st, by) {
+  while (st.blasts.length) {
+    const [r, c] = st.blasts.shift(); ev(st, '💥 폭탄병이 터졌어요!');
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) if (inB(r + dr, c + dc) && st.board[r + dr][c + dc]) damage(st, r + dr, c + dc, by);
+  }
+}
+function bite(st, ms, as) {
+  const a = pieceAt(st, as), m = pieceAt(st, ms);
+  st.board[as[0]][as[1]] = null; onRemoved(st, a, as[0], as[1], m.color);
+  m.type = 'R'; m.moved = true; ev(st, '📦 미믹이 깨어나서 ' + UNITS[realType(a)].name + '을(를) 잡아먹었어요!');
+}
+function findPortalPair(st, r, c) {
+  const id = st.tiles[r][c].portal.id;
+  for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) { const t = st.tiles[i][j]; if ((i !== r || j !== c) && t.portal && t.portal.id === id) return [i, j]; }
+  return null;
+}
+function landing(st, pos, p, from) {
+  let [r, c] = pos, t = st.tiles[r][c];
+  if (t.banana && t.banana !== p.color) {
+    delete t.banana;
+    const dr = Math.sign(r - from[0]), dc = Math.sign(c - from[1]);
+    for (let k = 0; k < 2; k++) { const nr = r + dr, nc = c + dc; if (!inB(nr, nc) || st.board[nr][nc]) break; moveTo(st, [r, c], [nr, nc]); r = nr; c = nc; }
+    ev(st, '🍌 바나나 껍질을 밟고 미끄러졌어요!'); t = st.tiles[r][c];
+  }
+  if (t.portal && t.portal.until >= st.ply) {
+    const pair = findPortalPair(st, r, c);
+    if (pair && !st.board[pair[0]][pair[1]]) { moveTo(st, [r, c], pair); [r, c] = pair; ev(st, '🌀 포탈을 타고 이동했어요'); t = st.tiles[r][c]; }
+  }
+  if (t.web && t.web.owner !== p.color && t.web.until >= st.ply) { delete t.web; p.frozen = st.ply + 2; ev(st, '🕸️ 거미줄에 걸려서 한 턴 묶였어요'); }
+  return [r, c];
+}
+function applyMove(st, m) {
+  const [fr, fc] = m.from, p = st.board[fr][fc], col = p.color, origType = p.type;
+  st.ep = null;
+  let land = null;
+  if (m.kind === 'swap') {
+    const q = pieceAt(st, m.to); st.board[m.to[0]][m.to[1]] = p; st.board[fr][fc] = q; q.moved = true;
+  } else if (m.kind === 'shoot' || m.kind === 'hitrun') {
+    for (const s of m.caps) { const q = pieceAt(st, s); if (q && q.type === 'mimic' && m.kind === 'hitrun') bite(st, s, [fr, fc]); else damage(st, s[0], s[1], col); }
+  } else if (m.kind === 'castle') {
+    moveTo(st, [fr, fc], m.to); moveTo(st, m.rook, m.rookTo); pieceAt(st, m.rookTo).moved = true;
+  } else if (m.kind === 'giant') {
+    let cur = [fr, fc], alive = true;
+    for (const s of m.path) {
+      const q = pieceAt(st, s);
+      if (q) {
+        if (q.type === 'mimic' && q.color !== col) { bite(st, s, [fr, fc]); alive = false; break; }
+        if (!damage(st, s[0], s[1], col)) break;
+      }
+      cur = s;
+    }
+    if (alive && !sqEq(cur, [fr, fc])) { moveTo(st, [fr, fc], cur); land = cur; }
+  } else if (m.kind === 'monkey') {
+    let alive = true, prev = [fr, fc];
+    for (const s of m.path) {
+      const mid = [(prev[0] + s[0]) / 2, (prev[1] + s[1]) / 2], q = pieceAt(st, mid);
+      if (q && m.caps.some(x => sqEq(x, mid))) {
+        if (q.type === 'mimic') { bite(st, mid, [fr, fc]); alive = false; break; }
+        damage(st, mid[0], mid[1], col);
+      }
+      prev = s;
+    }
+    if (alive) { moveTo(st, [fr, fc], prev); land = prev; }
+  } else {
+    const q = pieceAt(st, m.to);
+    if (m.ep) { const s = m.caps[0]; damage(st, s[0], s[1], col); moveTo(st, [fr, fc], m.to); land = m.to; }
+    else if (q) {
+      if (q.type === 'mimic' && q.color !== col && p.type !== 'K') bite(st, m.to, [fr, fc]);
+      else if (damage(st, m.to[0], m.to[1], col)) { moveTo(st, [fr, fc], m.to); land = m.to; }
+    } else {
+      moveTo(st, [fr, fc], m.to); land = m.to;
+      if (m.dbl) st.ep = { sq: [fr + fwd(col), fc], pawn: m.to, color: col };
+    }
+  }
+  p.moved = true;
+  if (land && pieceAt(st, land) === p) {
+    land = landing(st, land, p, [fr, fc]);
+    if (origType === 'spider') st.tiles[fr][fc].web = { owner: col, until: st.ply + 6 };
+    if (p.type === 'P' && land[0] === (col === W ? 0 : 7)) p.type = m.promo || 'Q';
+  }
+  st.lastMoved[col] = origType;
+  processBlasts(st, col);
+  normalize(st);
+}
+function normalize(st) {
+  for (let c = 0; c < 8; c++) {
+    const a = st.board[0][c], b = st.board[7][c];
+    if (a && a.type === 'P' && a.color === W) a.type = 'Q';
+    if (b && b.type === 'P' && b.color === BL) b.type = 'Q';
+  }
+}
+
+/* ================= 카드 ================= */
+const half = (col, r) => (col === W ? r >= 4 : r <= 3);
+const isOwn = (st, s, me, types) => { const q = pieceAt(st, s); return !!q && q.color === me && (!types || types.includes(q.type)); };
+const isEnemy = (st, s, me) => { const q = pieceAt(st, s); return !!q && q.color === opp(me); };
+const isEmpty = (st, s) => !pieceAt(st, s);
+function compSize(st, s, me, types) {
+  const seen = new Set([s[0] * 8 + s[1]]), q = [s];
+  while (q.length) { const [r, c] = q.pop(); for (const [dr, dc] of D8) { const nr = r + dr, nc = c + dc, k = nr * 8 + nc; if (inB(nr, nc) && !seen.has(k) && isOwn(st, [nr, nc], me, types)) { seen.add(k); q.push([nr, nc]); } } }
+  return seen.size;
+}
+const mergeStep = (types, n, label) => ({
+  prompt: label,
+  ok: (st, picks, s, me) => isOwn(st, s, me, types) && !picks.some(x => sqEq(x, s)) && (picks.length === 0 ? compSize(st, s, me, types) >= n : picks.some(x => adj(x, s))),
+});
+const rep = (n, step) => Array.from({ length: n }, () => step);
+function merge(st, picks, me, type, extra) {
+  for (const s of picks) st.board[s[0]][s[1]] = null;
+  const last = picks[picks.length - 1];
+  st.board[last[0]][last[1]] = mk(st, me, type, Object.assign({ moved: true }, extra || {}));
+}
+const transform = (types, to, label) => ({
+  steps: [{ prompt: label, ok: (st, p, s, me) => isOwn(st, s, me, types) }],
+  apply(st, picks) { pieceAt(st, picks[0]).type = to; },
+});
+const summonHalf = (type, label, extra) => ({
+  steps: [{ prompt: label, ok: (st, p, s, me) => isEmpty(st, s) && half(me, s[0]) }],
+  apply(st, picks, me) { st.board[picks[0][0]][picks[0][1]] = mk(st, me, type, Object.assign({ moved: true }, extra || {})); },
+});
+function puppetMoves(st, s) {
+  return gen(st, s[0], s[1], false).filter(m => !m.caps.length && m.kind !== 'swap' && m.kind !== 'castle' && !m.promo);
+}
+function safeTarget(st, cands, me, mutate) {
+  const was = inCheck(st, me);
+  for (const s of shuffle(cands.slice())) { const s2 = clone(st); mutate(s2, s); processBlasts(s2, me); if (was || !inCheck(s2, me)) return s; }
+  return null;
+}
+function allSquares(fn) { const out = []; for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) if (fn([r, c])) out.push([r, c]); return out; }
+
+const CARDS = {
+  giant: Object.assign({ name: '거신병', icon: '🗿', tier: 3, kind: '합체', unique: 'giant',
+    text: '서로 붙어 있는 내 폰 5개를 합쳐 🗿 거신병을 만듭니다. 마지막으로 고른 칸에 생깁니다.',
+    steps: rep(5, mergeStep(['P'], 5, '붙어 있는 내 폰 5개를 차례로 고르세요')),
+    apply(st, p, me) { merge(st, p, me, 'giant', { hp: 2 }); ev(st, '🗿 거신병이 일어났어요!'); } }),
+  slime: { name: '슬라임 실험', icon: '🟢', tier: 1, kind: '합체', unique: 'slime',
+    text: '서로 붙어 있는 내 폰 3개를 합쳐 🟢 슬라임을 만듭니다. 마지막으로 고른 칸에 생깁니다.',
+    steps: rep(3, mergeStep(['P'], 3, '붙어 있는 내 폰 3개를 차례로 고르세요')),
+    apply(st, p, me) { merge(st, p, me, 'slime'); } },
+  train: { name: '기관차 조립', icon: '🚂', tier: 2, kind: '합체', unique: 'train',
+    text: '같은 가로줄이나 세로줄에 있는 내 룩 2개를 합칩니다. 두 번째로 고른 룩 자리에 🚂 기관차가 생깁니다.',
+    steps: [
+      { prompt: '첫 번째 룩을 고르세요', ok: (st, p, s, me) => isOwn(st, s, me, ['R']) && allSquares(x => isOwn(st, x, me, ['R']) && !sqEq(x, s) && (x[0] === s[0] || x[1] === s[1])).length > 0 },
+      { prompt: '같은 줄의 다른 룩을 고르세요', ok: (st, p, s, me) => isOwn(st, s, me, ['R']) && !sqEq(s, p[0]) && (s[0] === p[0][0] || s[1] === p[0][1]) },
+    ],
+    apply(st, p, me) { merge(st, p, me, 'train'); ev(st, '🚂 기관차가 출발 준비를 마쳤어요'); } },
+  wizard: { name: '마법 학교', icon: '🧙', tier: 2, kind: '합체', unique: 'wizard',
+    text: '내 비숍과 그 옆에 붙어 있는 내 폰을 합칩니다. 비숍 자리에 🧙 마법사가 생깁니다.',
+    steps: [
+      { prompt: '내 비숍을 고르세요', ok: (st, p, s, me) => isOwn(st, s, me, ['B']) && D8.some(([dr, dc]) => inB(s[0] + dr, s[1] + dc) && isOwn(st, [s[0] + dr, s[1] + dc], me, ['P'])) },
+      { prompt: '비숍 옆의 내 폰을 고르세요', ok: (st, p, s, me) => isOwn(st, s, me, ['P']) && adj(s, p[0]) },
+    ],
+    apply(st, p, me) { merge(st, [p[1], p[0]], me, 'wizard'); } },
+  egg: Object.assign({ name: '드래곤 알', icon: '🥚', tier: 3, kind: '소환', unique: 'dragon',
+    text: '내 진영(내 쪽 4줄) 빈칸에 🥚 알을 놓습니다. 내 턴이 3번 지날 때까지 살아남으면 🐉 드래곤이 부화합니다.' },
+    summonHalf('egg', '알을 놓을 내 진영 빈칸을 고르세요', { timer: 3 })),
+  mimic: { name: '미믹 상자', icon: '📦', tier: 2, kind: '소환',
+    text: '빈칸 아무 데나 📦 미믹을 놓습니다. 미믹을 잡으러 온 상대 말은 잡아먹히고, 미믹은 룩이 됩니다.',
+    steps: [{ prompt: '미믹을 놓을 빈칸을 고르세요', ok: (st, p, s) => isEmpty(st, s) }],
+    apply(st, p, me) { st.board[p[0][0]][p[0][1]] = mk(st, me, 'mimic', { moved: true }); } },
+  archer: Object.assign({ name: '궁수 고용', icon: '🏹', tier: 2, kind: '변신', text: '내 폰 하나를 🏹 궁수로 바꿉니다.' }, transform(['P'], 'archer', '궁수로 바꿀 내 폰을 고르세요')),
+  ninja: Object.assign({ name: '닌자 잠입', icon: '🥷', tier: 2, kind: '변신', text: '내 나이트 하나를 🥷 닌자로 바꿉니다.' }, transform(['N'], 'ninja', '닌자로 바꿀 내 나이트를 고르세요')),
+  angel: { name: '기도', icon: '😇', tier: 2, kind: '소환',
+    text: '내 킹 옆 빈칸에 😇 수호천사를 부릅니다. 천사는 잡히지 않고, 주변 아군 폰을 지켜줍니다. 내 턴 4번 뒤에 떠납니다.',
+    steps: [{ prompt: '킹 옆 빈칸을 고르세요', ok: (st, p, s, me) => isEmpty(st, s) && adj(s, kingPos(st, me)) }],
+    apply(st, p, me) { st.board[p[0][0]][p[0][1]] = mk(st, me, 'angel', { moved: true, timer: 4 }); } },
+  mirror: Object.assign({ name: '거울 소환', icon: '🪞', tier: 2, kind: '소환', text: '내 진영 빈칸에 🪞 미러맨을 부릅니다. 미러맨은 상대가 직전에 움직인 말처럼 움직입니다.' },
+    summonHalf('mirror', '미러맨을 놓을 내 진영 빈칸을 고르세요')),
+  bomber: Object.assign({ name: '폭탄 조끼', icon: '🧨', tier: 1, kind: '변신', text: '내 폰 하나를 🧨 폭탄병으로 바꿉니다. 잡히면 주변이 폭발합니다.' }, transform(['P'], 'bomber', '폭탄병으로 바꿀 내 폰을 고르세요')),
+  spider: Object.assign({ name: '거미 둥지', icon: '🕷️', tier: 1, kind: '소환', text: '내 진영 빈칸에 🕷️ 거미를 부릅니다. 거미가 떠난 칸에는 거미줄이 남습니다.' },
+    summonHalf('spider', '거미를 놓을 내 진영 빈칸을 고르세요')),
+  monkey: Object.assign({ name: '정글의 부름', icon: '🐒', tier: 1, kind: '변신', text: '내 폰 하나를 🐒 원숭이로 바꿉니다. 원숭이는 말을 뛰어넘어 잡습니다.' }, transform(['P'], 'monkey', '원숭이로 바꿀 내 폰을 고르세요')),
+  zombie: { name: '좀비 부활', icon: '🧟', tier: 1, kind: '소환',
+    text: '내가 잡은 상대 말 하나가 내 편 🧟 좀비 폰으로 되살아납니다. 내 진영 빈칸에 놓습니다.',
+    canUse: (st, me) => st.captured[me].length > 0 || '아직 잡은 상대 말이 없어요',
+    steps: [{ prompt: '좀비를 놓을 내 진영 빈칸을 고르세요', ok: (st, p, s, me) => isEmpty(st, s) && half(me, s[0]) }],
+    apply(st, p, me) { const t = st.captured[me].pop(); st.board[p[0][0]][p[0][1]] = mk(st, me, 'zombie', { moved: true }); ev(st, '🧟 ' + UNITS[t].name + '이(가) 좀비로 돌아왔어요'); } },
+  frog: { name: '개구리 마법', icon: '🐸', tier: 2, kind: '저주',
+    text: '상대 말 하나를 잠시 🐸 개구리로 만듭니다. 개구리는 앞으로 1칸만 가고 아무것도 못 잡습니다. 상대 턴 2번 뒤 돌아옵니다. 킹에는 쓸 수 없습니다.',
+    steps: [{ prompt: '개구리로 만들 상대 말을 고르세요', ok: (st, p, s, me) => isEnemy(st, s, me) && !['K', 'frog', 'angel'].includes(pieceAt(st, s).type) }],
+    apply(st, p) { const q = pieceAt(st, p[0]); q.frog = { orig: q.type, until: st.ply + 4 }; ev(st, '🐸 ' + UNITS[q.type].name + '이(가) 개구리가 됐어요'); q.type = 'frog'; } },
+  puppet: { name: '인형술', icon: '🪆', tier: 2, kind: '저주',
+    text: '상대 말 하나를 내가 대신 한 번 움직입니다. 잡기와 승진은 할 수 없고, 킹은 고를 수 없습니다. 그다음 내 말도 평소처럼 움직입니다.',
+    steps: [
+      { prompt: '조종할 상대 말을 고르세요', ok: (st, p, s, me) => isEnemy(st, s, me) && pieceAt(st, s).type !== 'K' && puppetMoves(st, s).length > 0 },
+      { prompt: '그 말을 옮길 칸을 고르세요', ok: (st, p, s) => puppetMoves(st, p[0]).some(m => sqEq(m.click, s)) },
+    ],
+    apply(st, p) { const m = puppetMoves(st, p[0]).find(x => sqEq(x.click, p[1])); applyMove(st, m); ev(st, '🪆 상대 말을 조종했어요'); } },
+  ban: { name: '금지령', icon: '⛔', tier: 2, kind: '저주',
+    text: '상대 말 하나를 고르면, 상대는 다음 2턴 동안 그 종류의 말을 움직일 수 없습니다. 킹은 고를 수 없습니다.',
+    steps: [{ prompt: '금지할 종류의 상대 말을 고르세요', ok: (st, p, s, me) => isEnemy(st, s, me) && pieceAt(st, s).type !== 'K' }],
+    apply(st, p, me) { const t = pieceAt(st, p[0]).type; st.ban[opp(me)] = { type: t, until: st.ply + 3 }; ev(st, '⛔ 2턴 동안 상대 ' + UNITS[t].name + ' 이동 금지'); } },
+  rotate: { name: '회전판', icon: '🔄', tier: 3, kind: '판 조작',
+    text: '보드 가운데 4×4 칸(c3~f6)을 통째로 시계 방향으로 90도 돌립니다.',
+    steps: [],
+    apply(st) {
+      const sub = [];
+      for (let i = 0; i < 4; i++) { sub.push([]); for (let j = 0; j < 4; j++) sub[i].push({ p: st.board[2 + i][2 + j], t: st.tiles[2 + i][2 + j] }); }
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { const ni = j, nj = 3 - i; st.board[2 + ni][2 + nj] = sub[i][j].p; st.tiles[2 + ni][2 + nj] = sub[i][j].t; if (sub[i][j].p) sub[i][j].p.moved = true; }
+      for (const m of st.meteors) if (m.r >= 2 && m.r <= 5 && m.c >= 2 && m.c <= 5) { const i = m.r - 2, j = m.c - 2; m.r = 2 + j; m.c = 2 + 3 - i; }
+      st.ep = null; normalize(st); ev(st, '🔄 판이 돌아갔어요!');
+    } },
+  blackhole: { name: '블랙홀', icon: '🕳️', tier: 2, kind: '판 조작',
+    text: '빈칸 하나에 블랙홀을 엽니다. 그 칸에서 2칸 떨어진 말들이 모두 블랙홀 쪽으로 1칸씩 끌려옵니다.',
+    steps: [{ prompt: '블랙홀을 열 빈칸을 고르세요', ok: (st, p, s) => isEmpty(st, s) }],
+    apply(st, p) {
+      const [r, c] = p[0]; let n = 0;
+      for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++) {
+        if (Math.max(Math.abs(dr), Math.abs(dc)) !== 2 || !inB(r + dr, c + dc) || !st.board[r + dr][c + dc]) continue;
+        const tr = r + dr - Math.sign(dr), tc = c + dc - Math.sign(dc);
+        if (!st.board[tr][tc]) { moveTo(st, [r + dr, c + dc], [tr, tc]); st.board[tr][tc].moved = true; n++; }
+      }
+      st.ep = null; normalize(st); ev(st, '🕳️ 블랙홀이 말 ' + n + '개를 끌어당겼어요');
+    } },
+  portal: { name: '포탈', icon: '🌀', tier: 2, kind: '판 조작',
+    text: '빈칸 두 곳을 포탈로 잇습니다. 한쪽에 멈춘 말은 반대쪽이 비어 있으면 그리로 나옵니다. 3턴 동안 유지됩니다.',
+    steps: [
+      { prompt: '첫 번째 포탈 칸을 고르세요', ok: (st, p, s) => isEmpty(st, s) && !st.tiles[s[0]][s[1]].portal },
+      { prompt: '두 번째 포탈 칸을 고르세요', ok: (st, p, s) => isEmpty(st, s) && !sqEq(s, p[0]) && !st.tiles[s[0]][s[1]].portal },
+    ],
+    apply(st, p) { const id = ++st.portalSeq; for (const s of p) st.tiles[s[0]][s[1]].portal = { id, until: st.ply + 6 }; } },
+  meteor: { name: '운석 예고', icon: '☄️', tier: 2, kind: '판 조작', noSim: true,
+    text: '랜덤한 칸 3곳에 운석 표시가 뜹니다. 상대 턴이 끝날 때 운석이 떨어져 그 칸의 말이 사라집니다. 킹은 무사합니다.',
+    steps: [],
+    apply(st) {
+      const cands = shuffle(allSquares(s => { const q = pieceAt(st, s); return !(q && q.type === 'K'); }));
+      for (const s of cands.slice(0, 3)) st.meteors.push({ r: s[0], c: s[1], fall: st.ply + 1 });
+      ev(st, '☄️ 운석이 다가와요! (' + cands.slice(0, 3).map(sqName).join(', ') + ')');
+    } },
+  swap: { name: '카드 교환', icon: '🔁', tier: 3, kind: '혼돈', noSim: true,
+    text: '내 손패와 상대 손패를 전부 맞바꿉니다.',
+    steps: [],
+    apply(st, p, me) { const a = st.hands[me]; st.hands[me] = st.hands[opp(me)]; st.hands[opp(me)] = a; ev(st, '🔁 손패를 맞바꿨어요'); } },
+  banana: { name: '바나나 껍질', icon: '🍌', tier: 1, kind: '함정',
+    text: '빈칸에 바나나 껍질을 몰래 깝니다. 상대 말이 그 칸에 멈추면 가던 방향으로 2칸 더 미끄러집니다. 상대에게는 보이지 않습니다.',
+    steps: [{ prompt: '바나나 껍질을 깔 빈칸을 고르세요', ok: (st, p, s) => isEmpty(st, s) && !st.tiles[s[0]][s[1]].banana }],
+    apply(st, p, me) { st.tiles[p[0][0]][p[0][1]].banana = me; } },
+  chickens: { name: '닭 풀기', icon: '🐔', tier: 1, kind: '혼돈', noSim: true,
+    text: '보드 가운데(3~6번째 줄) 빈칸 3곳에 🐔 닭을 풀어놓습니다. 닭은 매 턴 아무렇게나 움직이고, 잡은 사람은 카드를 받습니다.',
+    steps: [],
+    apply(st) {
+      const cands = shuffle(allSquares(s => s[0] >= 2 && s[0] <= 5 && isEmpty(st, s))).slice(0, 3);
+      for (const s of cands) st.board[s[0]][s[1]] = mk(st, NEU, 'chicken', { moved: true });
+      ev(st, '🐔 꼬끼오! 닭 ' + cands.length + '마리가 풀려났어요');
+    } },
+  dice: { name: '운명의 주사위', icon: '🎲', tier: 1, kind: '혼돈', noSim: true,
+    text: '주사위를 굴립니다. 1 카드 2장 · 2 내 폰 하나가 궁수로 · 3 상대 폰 하나 제거 · 4 상대 말 하나 한 턴 묶기 · 5 내 폰 하나 잃음 · 6 상대가 카드 1장.',
+    steps: [],
+    apply(st, p, me) {
+      const roll = 1 + rand(6), en = opp(me);
+      const pawns = col => allSquares(s => { const q = pieceAt(st, s); return q && q.color === col && PAWNLIKE.has(q.type) && !invulnerable(st, s[0], s[1]); });
+      let msg = '';
+      if (roll === 1) { st.pendingDraw[me] += 2; msg = '카드 2장을 받아요'; }
+      else if (roll === 2) { const c = shuffle(allSquares(s => isOwn(st, s, me, ['P'])))[0]; if (c) { pieceAt(st, c).type = 'archer'; msg = sqName(c) + ' 폰이 궁수가 됐어요'; } else msg = '바꿀 폰이 없어요'; }
+      else if (roll === 3) { const c = safeTarget(st, pawns(en), me, (s2, s) => { s2.board[s[0]][s[1]] = null; }); if (c) { damage(st, c[0], c[1], me); msg = '상대 ' + sqName(c) + ' 폰이 사라졌어요'; } else msg = '없앨 폰이 없어요'; }
+      else if (roll === 4) { const c = shuffle(allSquares(s => { const q = pieceAt(st, s); return q && q.color === en && q.type !== 'K'; }))[0]; if (c) { pieceAt(st, c).frozen = st.ply + 1; msg = '상대 ' + sqName(c) + ' 말이 한 턴 묶였어요'; } else msg = '묶을 말이 없어요'; }
+      else if (roll === 5) { const c = safeTarget(st, pawns(me), me, (s2, s) => { s2.board[s[0]][s[1]] = null; }); if (c) { damage(st, c[0], c[1], null); msg = '앗, 내 ' + sqName(c) + ' 폰을 잃었어요'; } else msg = '잃을 폰이 없어서 무사해요'; }
+      else { st.pendingDraw[en] += 1; msg = '상대가 카드 1장을 받아요'; }
+      ev(st, '🎲 ' + roll + ': ' + msg);
+    } },
+};
+const TIER_NAME = { 1: '일반', 2: '희귀', 3: '전설' };
+const CARD_ORDER = ['giant','slime','train','wizard','egg','mimic','archer','ninja','angel','mirror','bomber','spider','monkey','zombie','frog','puppet','ban','rotate','blackhole','portal','meteor','swap','banana','chickens','dice'];
+
+function randomCard() {
+  const x = Math.random(), tier = x < 0.1 ? 3 : x < 0.4 ? 2 : 1;
+  const pool = CARD_ORDER.filter(id => CARDS[id].tier === tier);
+  return pool[rand(pool.length)];
+}
+function hasUnique(st, me, group) { let f = false; eachPiece(st, q => { if (q.color === me && UNIQUE_GROUP[q.type] === group) f = true; }); return f; }
+function cardBlock(st, id, me) {
+  const card = CARDS[id];
+  if (st.cardUsed) return '카드는 한 턴에 1장만 쓸 수 있어요';
+  if (card.unique && hasUnique(st, me, card.unique)) return '이미 같은 유닛이 판에 있어요';
+  if (card.canUse) { const r = card.canUse(st, me); if (r !== true) return r; }
+  if (card.steps.length && !allSquares(s => card.steps[0].ok(st, [], s, me)).length) return '지금은 고를 수 있는 대상이 없어요';
+  return null;
+}
+
+/* ================= 진행 ================= */
+let G = null, LEGAL = [], LOG = [];
+const ui = { sel: null, info: null, cardView: null, card: null, revealed: false, flip: false, stuck: false };
+
+function flushDraws(st) {
+  for (const col of [W, BL]) while (st.pendingDraw[col] > 0) {
+    st.pendingDraw[col]--;
+    if (st.hands[col].length >= HAND_MAX) { addLog(col, '손패가 가득 차서 카드를 받지 못했어요', true); continue; }
+    const id = randomCard(); st.hands[col].push(id);
+  }
+}
+function flushEvents() { for (const m of G.events) { toast(m); addLog(null, m, true); } G.events = []; }
+function addLog(col, text, isEv) { LOG.push({ n: Math.ceil(G.ply / 2), col, text, ev: !!isEv }); }
+
+function evaluate() {
+  const me = G.turn;
+  LEGAL = legalMoves(G, me);
+  ui.stuck = false;
+  if (!LEGAL.length) {
+    if (!G.cardUsed && canRescue(G, me)) { ui.stuck = true; return; }
+    G.over = inCheck(G, me) ? { winner: opp(me), reason: '체크메이트' } : { winner: null, reason: '스테일메이트 (움직일 수 있는 말이 없어요)' };
+  }
+}
+// 말로는 둘 수가 없을 때, 손패의 카드로 살 길이 있는지 찾아봅니다.
+function canRescue(st, me) {
+  let budget = 600;
+  for (let idx = 0; idx < st.hands[me].length; idx++) {
+    const id = st.hands[me][idx], card = CARDS[id];
+    if (card.noSim || cardBlock(st, id, me)) continue;
+    const dfs = picks => {
+      if (budget <= 0) return false;
+      if (picks.length === card.steps.length) {
+        budget--;
+        const s2 = clone(st); s2.hands[me].splice(idx, 1);
+        card.apply(s2, picks, me); processBlasts(s2, me);
+        return legalMoves(s2, me, false, true).length > 0;
+      }
+      for (const s of allSquares(x => card.steps[picks.length].ok(st, picks, x, me))) { if (dfs(picks.concat([s]))) return true; if (budget <= 0) return false; }
+      return false;
+    };
+    if (dfs([])) return true;
+  }
+  return false;
+}
+function startTurn() {
+  const me = G.turn; G.turns[me]++;
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    const p = G.board[r][c]; if (!p) continue;
+    if (p.color === me && p.type === 'egg') { p.timer--; if (p.timer <= 0) { p.type = 'dragon'; delete p.timer; ev(G, '🐉 드래곤이 부화했어요!'); } }
+    if (p.color === me && p.type === 'angel') { p.timer--; if (p.timer <= 0) { G.board[r][c] = null; ev(G, '😇 수호천사가 하늘로 돌아갔어요'); } }
+    if (p.frog && G.ply >= p.frog.until) { p.type = p.frog.orig; delete p.frog; ev(G, '🐸 개구리가 ' + UNITS[p.type].name + '(으)로 돌아왔어요'); }
+  }
+  if (G.turns[me] > 1 && G.turns[me] % 4 === 1) { G.pendingDraw[me]++; ev(G, '🃏 ' + COLOR_NAME[me] + '이 정기 카드를 받아요'); }
+  G.cardUsed = false;
+  flushDraws(G);
+  evaluate();
+}
+function endTurn() {
+  const me = G.turn;
+  // 기관차 전진
+  const trains = allSquares(s => isOwn(G, s, me, ['train']));
+  for (const [r, c] of trains) {
+    const nr = r + fwd(me);
+    if (!inB(nr, c)) { G.board[r][c] = null; ev(G, '🚂 기관차가 보드 끝에서 떠났어요'); continue; }
+    const q = G.board[nr][c];
+    if (!q) moveTo(G, [r, c], [nr, c]);
+    else if (q.color !== me && q.type !== 'K') {
+      if (q.type === 'mimic') bite(G, [nr, c], [r, c]);
+      else if (damage(G, nr, c, me)) { moveTo(G, [r, c], [nr, c]); ev(G, '🚂 기관차가 들이받았어요!'); }
+    }
+  }
+  processBlasts(G, me);
+  // 운석
+  G.meteors = G.meteors.filter(m => {
+    if (m.fall !== G.ply) return true;
+    const q = G.board[m.r][m.c];
+    if (q && damage(G, m.r, m.c, null)) ev(G, '☄️ 운석이 ' + sqName([m.r, m.c]) + '의 ' + UNITS[realType(q)].name + '을(를) 부쉈어요!');
+    return false;
+  });
+  processBlasts(G, null);
+  // 닭
+  for (const [r, c] of allSquares(s => { const q = pieceAt(G, s); return q && q.type === 'chicken'; })) {
+    for (const [dr, dc] of shuffle(D8.slice())) { const nr = r + dr, nc = c + dc; if (inB(nr, nc) && !G.board[nr][nc]) { moveTo(G, [r, c], [nr, nc]); break; } }
+  }
+  // 지형 만료
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    const t = G.tiles[r][c];
+    if (t.web && t.web.until <= G.ply) delete t.web;
+    if (t.portal && t.portal.until <= G.ply) delete t.portal;
+  }
+  normalize(G);
+  G.turn = opp(me); G.ply++;
+  startTurn();
+  flushEvents();
+  ui.revealed = false; ui.sel = null; ui.info = null; ui.card = null; ui.cardView = null;
+  save(); render();
+}
+function doMove(m) {
+  const me = G.turn, text = moveText(G, m);
+  applyMove(G, m);
+  G.lastMove = { from: m.from, to: m.click };
+  addLog(me, text + (inCheck(G, opp(me)) ? ' +' : ''));
+  flushEvents();
+  endTurn();
+}
+function moveText(st, m) {
+  const p = pieceAt(st, m.from), ic = unitIcon(p);
+  if (m.kind === 'castle') return m.to[1] > m.from[1] ? '♚︎ 캐슬링 O-O' : '♚︎ 캐슬링 O-O-O';
+  if (m.kind === 'swap') return ic + ' ' + sqName(m.from) + ' ⇄ ' + sqName(m.to);
+  if (m.kind === 'shoot') return ic + ' ' + sqName(m.from) + ' 🎯 ' + sqName(m.click);
+  if (m.kind === 'hitrun') return ic + ' ' + sqName(m.from) + ' ⚔ ' + sqName(m.click) + ' (복귀)';
+  return ic + ' ' + sqName(m.from) + (m.caps.length ? ' × ' : ' → ') + sqName(m.to) + (m.caps.length > 1 ? ' (' + m.caps.length + '개 잡음)' : '');
+}
+function useCard(idx, picks) {
+  const me = G.turn, id = G.hands[me][idx], card = CARDS[id];
+  const block = cardBlock(G, id, me);
+  if (block) { toast(block); return false; }
+  if (!card.noSim) {
+    const s2 = clone(G); s2.hands[me].splice(idx, 1);
+    card.apply(s2, picks, me); processBlasts(s2, me);
+    if (inCheck(s2, me) && !legalMoves(s2, me).length) { toast('그 카드를 쓰면 킹을 지킬 수 없어요'); return false; }
+  }
+  G.hands[me].splice(idx, 1);
+  G.events = [];
+  addLog(me, card.icon + ' ' + card.name + ' 사용' + (picks.length ? ' (' + picks.map(sqName).join(', ') + ')' : ''));
+  card.apply(G, picks, me); processBlasts(G, me);
+  G.cardUsed = true;
+  flushEvents(); flushDraws(G); evaluate();
+  save();
+  return true;
+}
+function newGame() {
+  G = newState(); LOG = []; flushDraws(G); G.turns.w = 1; evaluate();
+  ui.revealed = false; ui.sel = null; ui.info = null; ui.card = null; ui.cardView = null;
+  addLog(null, '게임 시작! 각자 카드 2장을 받았어요', true);
+  save(); render();
+}
+
+/* ================= 화면 ================= */
+const $ = s => document.querySelector(s);
+const boardEl = $('#board');
+const flipped = () => ui.flip && G.turn === BL;
+const PORTAL_COLORS = ['#5fd4ff', '#c77dff', '#7dff9a', '#ff9f5f'];
+
+function highlights() {
+  const h = {};
+  const set = (s, cls) => { const k = s[0] + ',' + s[1]; h[k] = (h[k] || '') + ' ' + cls; };
+  if (G.lastMove) { set(G.lastMove.from, 'last'); set(G.lastMove.to, 'last'); }
+  if (ui.card) {
+    const card = CARDS[G.hands[G.turn][ui.card.idx]], step = card.steps[ui.card.picks.length];
+    for (const s of ui.card.picks) set(s, 'picked');
+    if (step) for (const s of allSquares(x => step.ok(G, ui.card.picks, x, G.turn))) set(s, 'tgt');
+  } else if (ui.sel) {
+    set(ui.sel, 'sel');
+    for (const m of LEGAL.filter(x => sqEq(x.from, ui.sel))) set(m.click, m.kind === 'shoot' || m.kind === 'hitrun' ? 'shoot cap' : m.kind === 'swap' ? 'swap' : m.caps.length ? 'cap' : 'mv');
+  }
+  return h;
+}
+function pieceHTML(p) {
+  const u = UNITS[p.type], locked = pieceLocked(G, p) && p.color === G.turn;
+  let badges = '';
+  if (p.hp) badges += '<span class="pips">' + '<i></i>'.repeat(p.hp) + '</span>';
+  if (p.timer) badges += '<span class="badge tr">' + p.timer + '</span>';
+  if (p.frog) badges += '<span class="badge tr">' + Math.max(1, Math.ceil((p.frog.until - G.ply) / 2)) + '</span>';
+  const frozen = p.frozen && G.ply <= p.frozen;
+  const banned = G.ban[p.color] && G.ply <= G.ban[p.color].until && G.ban[p.color].type === p.type;
+  let extra = '';
+  if (frozen) extra += '<span class="ice">❄️</span>';
+  else if (banned) extra += '<span class="ice">⛔</span>';
+  if (u.g) return '<span class="pc std ' + p.color + (locked ? ' frozen' : '') + '">' + u.g + '︎' + badges + '</span>' + extra;
+  return '<span class="pc sp ' + p.color + (u.small ? ' small' : '') + (locked ? ' frozen' : '') + '">' + u.e + badges + '</span>' + extra;
+}
+function renderBoard() {
+  const me = G.turn, h = highlights(), chk = inCheck(G, me) ? kingPos(G, me) : null;
+  let html = '';
+  for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+    const [r, c] = flipped() ? [7 - i, 7 - j] : [i, j];
+    const p = G.board[r][c], t = G.tiles[r][c];
+    let cls = 'sq ' + ((r + c) % 2 ? 'd' : 'l') + (h[r + ',' + c] || '');
+    if (chk && sqEq(chk, [r, c])) cls += ' check';
+    let inner = '';
+    if (j === 0) inner += '<span class="crd rk">' + (8 - r) + '</span>';
+    if (i === 7) inner += '<span class="crd fl">' + 'abcdefgh'[c] + '</span>';
+    if (t.web) inner += '<span class="tile web">🕸️</span>';
+    if (t.portal) inner += '<span class="tile portal" style="color:' + PORTAL_COLORS[(t.portal.id - 1) % 4] + '"></span>';
+    if (t.banana && ui.revealed && t.banana === me) inner += '<span class="tile banana" title="내 바나나 껍질">🍌</span>';
+    if (G.meteors.some(m => m.r === r && m.c === c)) inner += '<span class="tile meteor">☄️</span>';
+    if (p) inner += pieceHTML(p);
+    html += '<div class="' + cls + '" data-r="' + r + '" data-c="' + c + '" role="button" aria-label="' + sqName([r, c]) + (p ? ' ' + COLOR_NAME[p.color] + ' ' + UNITS[p.type].name : '') + '">' + inner + '</div>';
+  }
+  boardEl.innerHTML = html;
+}
+function barHTML(col) {
+  const caps = G.captured[col].map(t => UNITS[t].g ? UNITS[t].g + '︎' : UNITS[t].e).join('');
+  const n = G.hands[col].length;
+  return '<span class="who"><span class="dot ' + col + '"></span>' + COLOR_NAME[col] + '</span>' +
+    '<span class="meta">카드 ' + n + '/' + HAND_MAX + (G.turn === col && inCheck(G, col) ? ' · <b style="color:var(--danger)">체크!</b>' : '') + '</span>' +
+    '<span class="caps" title="잡은 말">' + caps + '</span>';
+}
+function renderBars() {
+  const bottom = flipped() ? BL : W, top = opp(bottom);
+  const bt = $('#barTop'), bb = $('#barBottom');
+  bt.innerHTML = barHTML(top); bb.innerHTML = barHTML(bottom);
+  bt.classList.toggle('active', G.turn === top); bb.classList.toggle('active', G.turn === bottom);
+}
+function renderStatus() {
+  const el = $('#status');
+  if (G.over) { el.innerHTML = G.over.winner ? '🏆 ' + COLOR_NAME[G.over.winner] + ' 승리 · ' + G.over.reason : '🤝 무승부 · ' + G.over.reason; return; }
+  let s = '<span class="dot ' + G.turn + '"></span> ' + COLOR_NAME[G.turn] + '의 차례 · ' + Math.ceil(G.ply / 2) + '수';
+  if (inCheck(G, G.turn)) s += ' · <span class="chk">체크!</span>';
+  if (ui.stuck) s += ' · <span class="chk">말로는 피할 수 없어요. 손패에 살 길이 있어요!</span>';
+  else if (G.cardUsed) s += ' · 이제 말을 움직이세요';
+  else s += ' · 카드 1장을 쓰고 말을 움직일 수 있어요';
+  el.innerHTML = s;
+}
+function renderHand() {
+  const me = G.turn, hand = G.hands[me], el = $('#hand'), act = $('#cardAction');
+  $('#handTitle').textContent = COLOR_NAME[me] + '의 손패';
+  if (!ui.revealed) { el.innerHTML = hand.map(() => '<div class="card back"></div>').join(''); act.innerHTML = ''; return; }
+  let html = '';
+  for (let i = 0; i < HAND_MAX; i++) {
+    if (i >= hand.length) { html += '<div class="card empty">빈 칸</div>'; continue; }
+    const c = CARDS[hand[i]], block = cardBlock(G, hand[i], me);
+    html += '<button class="card t' + c.tier + (ui.cardView === i ? ' on' : '') + (block ? ' off' : '') + '" data-i="' + i + '"><span class="ic">' + c.icon + '</span><span class="nm">' + c.name + '</span><span class="kd">' + c.kind + '</span></button>';
+  }
+  el.innerHTML = html;
+  if (ui.cardView === null || ui.cardView >= hand.length) {
+    act.innerHTML = '<div class="sub">' + (hand.length ? '카드를 누르면 설명을 볼 수 있어요. 내 턴이 4번 지날 때마다, 그리고 상대 퀸·룩·닭을 잡으면 카드를 받아요.' : '아직 카드가 없어요. 내 턴이 4번 지날 때마다, 그리고 상대 퀸·룩·닭을 잡으면 카드를 받아요.') + '</div>';
+    return;
+  }
+  const id = hand[ui.cardView], c = CARDS[id], block = cardBlock(G, id, me);
+  let a = '<div class="detail"><div class="row"><span class="title">' + c.icon + ' ' + c.name + '</span><span class="tier t' + c.tier + '">' + TIER_NAME[c.tier] + '</span><span class="sub">' + c.kind + '</span></div><div>' + c.text + '</div>';
+  if (ui.card) {
+    const step = c.steps[ui.card.picks.length];
+    a += '<div class="prompt">' + step.prompt + (c.steps.length > 1 ? ' (' + (ui.card.picks.length + 1) + '/' + c.steps.length + ')' : '') + '</div>';
+    a += '<div class="row"><button class="btn" id="btnCancelCard">취소</button></div>';
+  } else if (block) a += '<div class="reason">' + block + '</div>';
+  else a += '<div class="row"><button class="btn primary" id="btnUseCard">사용하기</button><button class="btn ghost" id="btnCloseCard">닫기</button></div>';
+  a += '</div>';
+  act.innerHTML = a;
+}
+function renderInfo() {
+  const el = $('#info');
+  if (!ui.info || !pieceAt(G, ui.info)) { el.innerHTML = '<span class="sub">말을 누르면 움직이는 방법이 여기 나와요.</span>'; return; }
+  const p = pieceAt(G, ui.info), u = UNITS[p.type];
+  let s = '<b>' + (u.g ? u.g + '︎' : u.e) + ' ' + COLOR_NAME[p.color] + ' ' + u.name + '</b> <span class="sub">' + sqName(ui.info) + '</span><div>' + u.desc + '</div>';
+  const notes = [];
+  if (p.hp) notes.push('체력 ' + p.hp);
+  if (p.timer) notes.push(p.type === 'egg' ? '부화까지 내 턴 ' + p.timer + '번' : '떠나기까지 내 턴 ' + p.timer + '번');
+  if (p.frog) notes.push('원래는 ' + UNITS[p.frog.orig].name);
+  if (p.frozen && G.ply <= p.frozen) notes.push('❄️ 묶여서 이번 턴 못 움직임');
+  if (G.ban[p.color] && G.ply <= G.ban[p.color].until && G.ban[p.color].type === p.type) notes.push('⛔ 금지령');
+  if (p.type === 'mirror') { const lm = G.lastMoved[opp(p.color)]; notes.push('지금은 ' + (lm && UNITS[lm].g && lm !== 'K' ? UNITS[lm].name : '킹') + '처럼 움직임'); }
+  if (invulnerable(G, ui.info[0], ui.info[1])) notes.push('😇 보호받는 중');
+  if (notes.length) s += '<div class="sub">' + notes.join(' · ') + '</div>';
+  el.innerHTML = s;
+}
+function renderLog() {
+  $('#log').innerHTML = LOG.slice(-80).reverse().map(l => '<li><span class="n">' + l.n + '</span>' + (l.col ? '<span class="dot ' + l.col + '"></span>' : '') + '<span class="t' + (l.ev ? ' ev' : '') + '">' + l.text + '</span></li>').join('');
+}
+function renderOverlay() {
+  const ov = $('#overlay');
+  if (G.over) {
+    ov.hidden = false;
+    ov.innerHTML = '<div class="sheet"><h2>' + (G.over.winner ? '🏆 ' + COLOR_NAME[G.over.winner] + ' 승리!' : '🤝 무승부') + '</h2><p>' + G.over.reason + '</p><div class="acts"><button class="btn primary" data-act="new">새 게임</button><button class="btn" data-act="close">판 보기</button></div></div>';
+    return;
+  }
+  if (ui.revealed || ui.modal) return;
+  ov.hidden = false;
+  const recent = LOG.slice(-5).map(l => '<div>' + (l.col ? '<span class="dot ' + l.col + '"></span> ' : '') + l.text + '</div>').join('');
+  ov.innerHTML = '<div class="sheet"><div class="big-dot dot ' + G.turn + '"></div><h2>' + COLOR_NAME[G.turn] + '의 차례예요</h2><p>상대가 손패를 보지 않도록 ' + COLOR_NAME[G.turn] + ' 플레이어에게 기기를 넘겨주세요.</p>' +
+    (recent ? '<div class="recent">' + recent + '</div>' : '') + '<div class="acts"><button class="btn primary" data-act="reveal">준비됐어요</button></div></div>';
+}
+function render() {
+  if (!ui.modal) $('#overlay').hidden = true;
+  renderStatus(); renderBars(); renderBoard(); renderHand(); renderInfo(); renderLog(); renderOverlay();
+  $('#btnFlip').textContent = '보드 뒤집기: ' + (ui.flip ? '켬' : '끔');
+}
+
+function toast(msg) {
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+  const box = $('#toasts'); box.appendChild(t); setTimeout(() => t.remove(), 2800);
+  while (box.children.length > 4) box.firstChild.remove();
+}
+function showModal(html) {
+  ui.modal = true; const ov = $('#overlay'); ov.hidden = false;
+  ov.innerHTML = '<div class="sheet wide">' + html + '<div class="acts"><button class="btn primary" data-act="closeModal">닫기</button></div></div>';
+}
+function unitGuide() {
+  const groups = [['기본 말', ['K','Q','R','B','N','P']], ['카드로 생기는 유닛', ['giant','dragon','egg','archer','ninja','slime','mini','train','bomber','spider','mimic','monkey','wizard','angel','mirror','zombie']], ['저주와 중립', ['frog','chicken']]];
+  return '<h2>유닛 도감</h2>' + groups.map(([t, ids]) => '<div class="gsec">' + t + '</div><div class="guide">' + ids.map(id => '<div class="gitem"><div class="h"><span class="e">' + (UNITS[id].g ? UNITS[id].g + '︎' : UNITS[id].e) + '</span>' + UNITS[id].name + '</div><p>' + UNITS[id].desc + '</p></div>').join('') + '</div>').join('');
+}
+function cardGuide() {
+  const rules = '<p>카드는 한 번 쓰면 사라져요. 시작할 때 2장, 내 턴이 4번 지날 때마다 1장, 상대 퀸·룩이나 닭을 잡을 때 1장을 받아요. 손패는 최대 3장이고, 카드는 한 턴에 1장만 쓸 수 있어요. 카드를 쓴 뒤에도 말은 평소처럼 움직여요. 킹은 카드로 잡히거나 사라지지 않아요. 거신병, 슬라임, 기관차, 마법사, 드래곤은 한 사람당 하나씩만 가질 수 있어요.</p>';
+  return '<h2>카드 도감</h2>' + rules + [3, 2, 1].map(t => '<div class="gsec">' + TIER_NAME[t] + '</div><div class="guide">' + CARD_ORDER.filter(id => CARDS[id].tier === t).map(id => { const c = CARDS[id]; return '<div class="gitem"><div class="h"><span class="e">' + c.icon + '</span>' + c.name + ' <span class="sub" style="font-weight:400">' + c.kind + '</span></div><p>' + c.text + '</p></div>'; }).join('') + '</div>').join('');
+}
+function askPromo(m) {
+  ui.modal = true; const ov = $('#overlay'); ov.hidden = false;
+  const col = G.turn;
+  ov.innerHTML = '<div class="sheet"><h2>승진할 말을 고르세요</h2><div class="promo">' + ['Q','R','B','N'].map(t => '<button data-promo="' + t + '" style="color:' + (col === W ? '#fff' : '#111') + ';text-shadow:0 0 2px #000" aria-label="' + UNITS[t].name + '">' + UNITS[t].g + '︎</button>').join('') + '</div></div>';
+  ui.pendingPromo = m;
+}
+
+/* ================= 입력 ================= */
+function onSquare(r, c) {
+  if (G.over || !ui.revealed) return;
+  const s = [r, c], me = G.turn;
+  if (ui.card) {
+    const card = CARDS[G.hands[me][ui.card.idx]], step = card.steps[ui.card.picks.length];
+    const k = ui.card.picks.findIndex(x => sqEq(x, s));
+    if (k >= 0) { ui.card.picks.splice(k); render(); return; }
+    if (!step.ok(G, ui.card.picks, s, me)) { toast('그 칸은 고를 수 없어요'); return; }
+    ui.card.picks.push(s);
+    if (ui.card.picks.length === card.steps.length) {
+      const { idx, picks } = ui.card; ui.card = null;
+      if (useCard(idx, picks)) ui.cardView = null;
+    }
+    render(); return;
+  }
+  if (ui.sel) {
+    const ms = LEGAL.filter(m => sqEq(m.from, ui.sel) && sqEq(m.click, s)).sort((a, b) => b.caps.length - a.caps.length);
+    if (ms.length) { if (ms[0].promo) askPromo(ms[0]); else doMove(ms[0]); return; }
+    if (sqEq(ui.sel, s)) { ui.sel = null; render(); return; }
+  }
+  const p = pieceAt(G, s);
+  ui.sel = null; ui.info = p ? s : null;
+  if (p && p.color === me) {
+    if (LEGAL.some(m => sqEq(m.from, s))) ui.sel = s;
+    else if (pieceLocked(G, p)) toast('이 말은 지금 묶여 있어요');
+    else if (!['egg', 'mimic', 'train'].includes(p.type)) toast('이 말은 지금 움직일 수 있는 칸이 없어요');
+  }
+  render();
+}
+boardEl.addEventListener('click', e => { const sq = e.target.closest('.sq'); if (sq) onSquare(+sq.dataset.r, +sq.dataset.c); });
+$('#hand').addEventListener('click', e => {
+  const b = e.target.closest('.card[data-i]'); if (!b || !ui.revealed || G.over) return;
+  const i = +b.dataset.i; ui.card = null; ui.cardView = ui.cardView === i ? null : i; ui.sel = null; render();
+});
+$('#cardAction').addEventListener('click', e => {
+  const me = G.turn;
+  if (e.target.id === 'btnUseCard') {
+    const c = CARDS[G.hands[me][ui.cardView]];
+    if (!c.steps.length) { if (useCard(ui.cardView, [])) ui.cardView = null; render(); }
+    else { ui.card = { idx: ui.cardView, picks: [] }; ui.sel = null; render(); }
+  } else if (e.target.id === 'btnCancelCard') { ui.card = null; render(); }
+  else if (e.target.id === 'btnCloseCard') { ui.cardView = null; render(); }
+});
+$('#overlay').addEventListener('click', e => {
+  const act = e.target.closest('[data-act]'), pr = e.target.closest('[data-promo]');
+  if (pr && ui.pendingPromo) { const m = Object.assign({}, ui.pendingPromo, { promo: pr.dataset.promo }); ui.pendingPromo = null; ui.modal = false; doMove(m); return; }
+  if (!act) return;
+  const a = act.dataset.act;
+  if (a === 'reveal') { ui.revealed = true; render(); }
+  else if (a === 'new') newGame();
+  else if (a === 'close') { $('#overlay').hidden = true; }
+  else if (a === 'closeModal') { ui.modal = false; render(); }
+});
+$('#btnUnits').addEventListener('click', () => showModal(unitGuide()));
+$('#btnCards').addEventListener('click', () => showModal(cardGuide()));
+$('#btnFlip').addEventListener('click', () => { ui.flip = !ui.flip; render(); });
+$('#btnNew').addEventListener('click', () => {
+  ui.modal = true; const ov = $('#overlay'); ov.hidden = false;
+  ov.innerHTML = '<div class="sheet"><h2>새 게임을 시작할까요?</h2><p>지금 판은 사라져요.</p><div class="acts"><button class="btn primary" data-act="new">새 게임</button><button class="btn" data-act="closeModal">계속하기</button></div></div>';
+});
+$('#btnResign').addEventListener('click', () => {
+  if (G.over) return;
+  ui.modal = true; const ov = $('#overlay'); ov.hidden = false;
+  ov.innerHTML = '<div class="sheet"><h2>' + COLOR_NAME[G.turn] + '이 기권할까요?</h2><div class="acts"><button class="btn primary" id="btnResignYes">기권하기</button><button class="btn" data-act="closeModal">취소</button></div></div>';
+  $('#btnResignYes').onclick = () => { ui.modal = false; G.over = { winner: opp(G.turn), reason: COLOR_NAME[G.turn] + ' 기권' }; save(); render(); };
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { ui.card = null; ui.sel = null; render(); } });
+
+/* ================= 저장 ================= */
+const SAVE_KEY = 'check-and-card-v1';
+function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ G, LOG })); } catch (e) {} }
+function load() { try { const d = JSON.parse(localStorage.getItem(SAVE_KEY)); if (d && d.G && d.G.board) { G = d.G; LOG = d.LOG || []; return true; } } catch (e) {} return false; }
+function start(data) {
+  if (data && data.G) { G = data.G; LOG = data.LOG || []; }
+  else if (!load()) { newGame(); return; }
+  G.events = G.events || [];
+  evaluate(); render();
+}
+if (window.claude && window.claude.hot) window.claude.hot.snapshot && window.claude.hot.snapshot(() => ({ G, LOG }));
+window.claude && window.claude.hot && window.claude.hot.ready ? window.claude.hot.ready(start) : start(window.claude && window.claude.hot && window.claude.hot.data || {});
+</script>
+</body>
+</html>
